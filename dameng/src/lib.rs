@@ -6,6 +6,7 @@
 pub mod client;
 pub mod config;
 pub mod error;
+pub mod interrupt;
 pub mod row;
 pub mod transaction;
 
@@ -13,6 +14,7 @@ pub use client::Client;
 pub use config::ConnectOptions;
 pub use dameng_protocol::Row;
 pub use error::{Error, Result};
+pub use interrupt::Interrupt;
 
 // Re-export protocol types needed for parameter binding
 pub use dameng_protocol::message::isolation::{IsolationLevel, SetIsolationMessage};

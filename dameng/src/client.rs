@@ -3,6 +3,7 @@
 use native_tls::{TlsConnector, TlsStream as NativeTlsStream};
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::sync::Arc;
 
 use bytes::{BufMut, BytesMut};
 use dameng_protocol::frame::{Frame, FRAME_HEADER_SIZE};
@@ -20,6 +21,7 @@ fn decode_error_msg(server_encoding: ServerEncoding, bytes: &[u8]) -> String {
 }
 
 use crate::error::{Error, Result};
+use crate::interrupt::Interrupt;
 use crate::row::ResultSet;
 
 const MAX_RESPONSE_BODY_BYTES: usize = 64 * 1024 * 1024;
@@ -265,6 +267,9 @@ pub struct Client {
     pub server_encoding: ServerEncoding,
     /// Whether the server supports the extended LOB format (NewLobFlag).
     pub new_lob_flag: bool,
+    /// Cancellation and deadline state for blocking reads. Clone it to interrupt a
+    /// statement from another thread; see [`crate::Interrupt`] for the reuse rules.
+    pub interrupt: Arc<Interrupt>,
 }
 
 impl Client {
@@ -281,6 +286,7 @@ impl Client {
             isolation_level: IsolationLevel::ReadCommitted,
             server_encoding: ServerEncoding::Gb18030,
             new_lob_flag: false,
+            interrupt: Arc::new(Interrupt::new()),
         }
     }
 
@@ -884,11 +890,20 @@ impl Client {
     /// Use for DML: INSERT, UPDATE, DELETE, CREATE, DROP, COMMIT, ROLLBACK.
     /// When auto_commit is true (default), a COMMIT is sent after each statement.
     pub fn execute(&mut self, sql: &str) -> Result<u64> {
+        Ok(self.execute_statement(sql)?.total_row_count)
+    }
+
+    /// Execute a statement on the DML framing path and return everything the server sent.
+    ///
+    /// `execute` reduces the response to an affected count, which silently discards the
+    /// rows of a row-returning statement the caller did not recognise as one. Callers that
+    /// cannot classify the statement up front should use this and branch on whether
+    /// [`ResultSet::columns`] came back non-empty.
+    pub fn execute_statement(&mut self, sql: &str) -> Result<ResultSet> {
         if !matches!(self.state, State::Ready) {
             return Err(Error::NotConnected);
         }
-        let rs = self.do_prepare_execute(&[], sql, false)?;
-        Ok(rs.total_row_count)
+        self.do_prepare_execute(&[], sql, false)
     }
 
     /// Internal commit - sends the COMMIT protocol message.
@@ -1333,6 +1348,11 @@ impl Client {
     fn read_message(&mut self) -> Result<(Frame, Vec<u8>)> {
         use std::io::ErrorKind;
 
+        // The socket read timeout only surfaces as WouldBlock here, so a silent server
+        // would otherwise spin these poll loops forever. Resolve the caller's deadline
+        // once and check it, plus cancellation, on every retry.
+        let interrupt = Arc::clone(&self.interrupt);
+        let deadline = interrupt.deadline();
         let stream = self.stream.as_mut().ok_or(Error::NotConnected)?;
         let mut buf = BytesMut::with_capacity(FRAME_HEADER_SIZE + 4096);
 
@@ -1348,6 +1368,7 @@ impl Client {
                 match stream.read(&mut dst[..cap]) {
                     Ok(n) => break n,
                     Err(e) if e.kind() == ErrorKind::WouldBlock || e.raw_os_error() == Some(35) => {
+                        interrupt.check(deadline)?;
                         std::thread::sleep(std::time::Duration::from_millis(10));
                         continue;
                     }
@@ -1378,6 +1399,7 @@ impl Client {
                 match stream.read(&mut dst[..cap]) {
                     Ok(n) => break n,
                     Err(e) if e.kind() == ErrorKind::WouldBlock || e.raw_os_error() == Some(35) => {
+                        interrupt.check(deadline)?;
                         std::thread::sleep(std::time::Duration::from_millis(10));
                         continue;
                     }

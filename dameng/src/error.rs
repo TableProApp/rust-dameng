@@ -29,6 +29,8 @@ pub enum Error {
     Timeout(String),
     /// Schema/database name resolution error.
     SchemaError(String),
+    /// The caller interrupted a blocking read. The connection is left mid-message.
+    Cancelled,
 }
 
 impl fmt::Display for Error {
@@ -51,6 +53,7 @@ impl fmt::Display for Error {
             Error::LobWriteFailed(s) => write!(f, "LOB write failed: {s}"),
             Error::Timeout(s) => write!(f, "timeout: {s}"),
             Error::SchemaError(s) => write!(f, "schema error: {s}"),
+            Error::Cancelled => write!(f, "cancelled"),
         }
     }
 }
