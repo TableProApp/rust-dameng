@@ -1,15 +1,15 @@
 //! Sync client for connecting to Dameng database.
 
+use native_tls::{TlsConnector, TlsStream as NativeTlsStream};
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use native_tls::{TlsConnector, TlsStream as NativeTlsStream};
 
 use bytes::{BufMut, BytesMut};
 use dameng_protocol::frame::{Frame, FRAME_HEADER_SIZE};
-use dameng_protocol::message::*;
-use dameng_protocol::message::isolation::{IsolationLevel, SetIsolationMessage};
 use dameng_protocol::message::bind::BindParam;
-use dameng_types::encoding::{ServerEncoding, decode_from_server};
+use dameng_protocol::message::isolation::{IsolationLevel, SetIsolationMessage};
+use dameng_protocol::message::*;
+use dameng_types::encoding::{decode_from_server, ServerEncoding};
 
 /// Decode a server error message, trying UTF-8 first, then server encoding.
 fn decode_error_msg(server_encoding: ServerEncoding, bytes: &[u8]) -> String {
@@ -21,6 +21,37 @@ fn decode_error_msg(server_encoding: ServerEncoding, bytes: &[u8]) -> String {
 
 use crate::error::{Error, Result};
 use crate::row::ResultSet;
+
+const MAX_RESPONSE_BODY_BYTES: usize = 64 * 1024 * 1024;
+const MAX_LOB_BYTES: usize = 64 * 1024 * 1024;
+
+fn checked_response_body_len(body_len: i32) -> Result<usize> {
+    let body_len = usize::try_from(body_len).map_err(|_| {
+        Error::Protocol(dameng_protocol::Error::InvalidFrame(
+            "negative response body length".to_string(),
+        ))
+    })?;
+    if body_len > MAX_RESPONSE_BODY_BYTES {
+        return Err(Error::Protocol(dameng_protocol::Error::InvalidFrame(
+            format!("response body length {body_len} exceeds {MAX_RESPONSE_BODY_BYTES} bytes"),
+        )));
+    }
+    Ok(body_len)
+}
+
+fn checked_lob_len(length: i64) -> Result<usize> {
+    let length = usize::try_from(length).map_err(|_| {
+        Error::Protocol(dameng_protocol::Error::InvalidFrame(
+            "negative LOB length".to_string(),
+        ))
+    })?;
+    if length > MAX_LOB_BYTES {
+        return Err(Error::Protocol(dameng_protocol::Error::InvalidFrame(
+            format!("LOB length {length} exceeds {MAX_LOB_BYTES} bytes"),
+        )));
+    }
+    Ok(length)
+}
 
 /// Convert a `ToDmValue` reference into a `BindParam` suitable for the DM protocol.
 fn to_bind_param(value: &dyn dameng_types::ToDmValue) -> BindParam {
@@ -115,7 +146,11 @@ fn to_bind_param(value: &dyn dameng_types::ToDmValue) -> BindParam {
             value: Some(d.to_string().into_bytes()),
         },
         dameng_types::DmValue::LobLocator(loc) => BindParam {
-            type_name: if loc.is_clob { "CLOB".to_string() } else { "BLOB".to_string() },
+            type_name: if loc.is_clob {
+                "CLOB".to_string()
+            } else {
+                "BLOB".to_string()
+            },
             type_code: if loc.is_clob { 14 } else { 13 },
             precision: 0,
             scale: 0,
@@ -145,22 +180,6 @@ fn to_bind_param(value: &dyn dameng_types::ToDmValue) -> BindParam {
             scale: 0,
             direction: ParameterDirection::Input,
             value: Some(ts.format("%Y-%m-%d %H:%M:%S").to_string().into_bytes()),
-        },
-        dameng_types::DmValue::Decimal(dec) => BindParam {
-            type_name: "DECIMAL".to_string(),
-            type_code: 9,
-            precision: 0,
-            scale: 0,
-            direction: ParameterDirection::Input,
-            value: Some(dec.to_string().into_bytes()),
-        },
-        _ => BindParam {
-            type_name: "INT".to_string(),
-            type_code: 4,
-            precision: 0,
-            scale: 0,
-            direction: ParameterDirection::Input,
-            value: None,
         },
     }
 }
@@ -384,8 +403,7 @@ impl Client {
                 frame.msg_type
             )));
         }
-        StartupResponse::from_bytes(&payload, frame.response_code)
-            .map_err(|e| Error::Protocol(e))
+        StartupResponse::from_bytes(&payload, frame.response_code).map_err(|e| Error::Protocol(e))
     }
 
     /// Send login credentials to the server.
@@ -409,19 +427,18 @@ impl Client {
         }
         // ACK responses have short payloads — LoginResponse::from_bytes needs >= 0x50 bytes.
         // Fall back to a minimal response built from the frame.
-        LoginResponse::from_bytes(&payload)
-            .or_else(|_| {
-                Ok(LoginResponse {
-                    session_id: frame.handle as u32,
-                    encoding: 1,
-                    server_status: 0,
-                    server_name: String::new(),
-                    username: String::new(),
-                    client_ip: String::new(),
-                    login_datetime: String::new(),
-                    db_name: String::new(),
-                })
+        LoginResponse::from_bytes(&payload).or_else(|_| {
+            Ok(LoginResponse {
+                session_id: frame.handle as u32,
+                encoding: 1,
+                server_status: 0,
+                server_name: String::new(),
+                username: String::new(),
+                client_ip: String::new(),
+                login_datetime: String::new(),
+                db_name: String::new(),
             })
+        })
     }
 
     /// Begin a new transaction by first committing any pending changes,
@@ -608,7 +625,9 @@ impl Client {
                         match v.len() {
                             1 => format!("{}", buf[0] as i8),
                             2 => format!("{}", i16::from_le_bytes([buf[0], buf[1]])),
-                            4 => format!("{}", i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]])),
+                            4 => {
+                                format!("{}", i32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]))
+                            }
                             8 => format!("{}", i64::from_le_bytes(buf)),
                             _ => String::from_utf8_lossy(v).to_string(),
                         }
@@ -621,7 +640,10 @@ impl Client {
                     if v.len() == 4 {
                         format!("{}", f32::from_le_bytes([v[0], v[1], v[2], v[3]]))
                     } else if v.len() == 8 {
-                        format!("{}", f64::from_le_bytes([v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]]))
+                        format!(
+                            "{}",
+                            f64::from_le_bytes([v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[7]])
+                        )
                     } else {
                         String::from_utf8_lossy(v).to_string()
                     }
@@ -674,8 +696,9 @@ impl Client {
             let rs = match self.read_exec_response(has_result_set) {
                 Ok(r) => r,
                 Err(e) => {
-                    // On DML error, send ROLLBACK to clean up connection state
-                    if !has_result_set {
+                    // Auto-commit statements can clean up their implicit transaction. An
+                    // explicit transaction stays active so its caller decides whether to roll back.
+                    if self.should_rollback_failed_statement(has_result_set) {
                         let _ = self.rollback();
                     }
                     return Err(e);
@@ -695,12 +718,28 @@ impl Client {
         self.write_all(&Frame::new(READY, 0, 0).encode())?;
         self.read_message()?;
         let exec = ExecMessage::new(&substituted, 0);
-        self.write_all(&build_message(OPTIMIZED_PREPARE_EXEC, 0, &exec.encode_payload()))?;
-        let rs = self.read_exec_response(has_result_set)?;
+        self.write_all(&build_message(
+            OPTIMIZED_PREPARE_EXEC,
+            0,
+            &exec.encode_payload(),
+        ))?;
+        let rs = match self.read_exec_response(has_result_set) {
+            Ok(result) => result,
+            Err(error) => {
+                if self.should_rollback_failed_statement(has_result_set) {
+                    let _ = self.rollback();
+                }
+                return Err(error);
+            }
+        };
         if self.auto_commit && !has_result_set {
             self.do_commit()?;
         }
         return Ok(rs);
+    }
+
+    fn should_rollback_failed_statement(&self, has_result_set: bool) -> bool {
+        self.auto_commit && !has_result_set
     }
 
     /// Stream LOB data for off-row params (BLOB/CLOB > 2048 bytes).
@@ -792,8 +831,8 @@ impl Client {
                 )));
             }
 
-            let fetch_resp =
-                FetchResponse::from_bytes(&payload, self.server_encoding).map_err(|e| Error::Protocol(e))?;
+            let fetch_resp = FetchResponse::from_bytes(&payload, self.server_encoding)
+                .map_err(|e| Error::Protocol(e))?;
 
             // Collect columns from first fetch response
             if all_columns.is_empty() && !fetch_resp.columns.is_empty() {
@@ -883,21 +922,9 @@ impl Client {
 
         // Read ALL messages until we find an EXEC_RESPONSE or get nothing
         let mut affected = 0u64;
-        let mut msg_count = 0;
-
         loop {
             match self.try_read_message(std::time::Duration::from_millis(200)) {
                 Some(Ok((frame, payload))) => {
-                    msg_count += 1;
-                    eprintln!(
-                        "DEBUG[msg{}]: type={} len={} resp={} first32={:02?}",
-                        msg_count,
-                        frame.msg_type,
-                        payload.len(),
-                        frame.response_code,
-                        &payload[..payload.len().min(32)]
-                    );
-
                     if frame.response_code < 0 {
                         return Err(Error::QueryFailed(format!(
                             "response_code={}",
@@ -938,8 +965,6 @@ impl Client {
                 None => break,
             }
         }
-
-        eprintln!("DEBUG: total msgs={}, affected={}", msg_count, affected);
 
         // Now send actual COMMIT
         let commit = CommitMessage;
@@ -992,6 +1017,29 @@ impl Client {
             return Err(Error::QueryFailed(error_detail));
         }
 
+        if frame.msg_type == EXPLAIN_RESPONSE {
+            let response = ExplainResponse::from_bytes(&payload, self.server_encoding)?;
+            let display_size = u32::try_from(response.plan.len()).unwrap_or(u32::MAX);
+            let columns = vec![Column {
+                name: "PLAN".to_string(),
+                type_code: dm_type::VARCHAR,
+                type_name: "VARCHAR".to_string(),
+                precision: display_size,
+                scale: 0,
+                nullable: false,
+                display_size,
+                table_name: String::new(),
+                schema_name: String::new(),
+                lob_tab_id: 0,
+                lob_col_id: 0,
+            }];
+            let rows = vec![Row {
+                row_id: 0,
+                values: vec![Some(response.plan.into_bytes())],
+            }];
+            return Ok(ResultSet::with_data(columns, rows, 0, 1));
+        }
+
         if frame.msg_type == ACK && payload.is_empty() {
             // OPE(91) DML: empty ACK with affected rows in header reserved area at offset 24.
             let affected = frame.update_count;
@@ -1003,26 +1051,18 @@ impl Client {
             // For SELECT queries this is the complete response — no trailing messages.
             // For DML queries there may be trailing messages, handled after parsing.
             let resp = ExecResponse::from_bytes(&payload, self.server_encoding)?;
-            let mut total = if resp.row_count > 0 {
-                resp.row_count as u64
-            } else {
-                // DM server doesn't fill header row_count for OPE(91) SELECT responses,
-                // so derive it from the actual inline row data.
-                resp.rows.len() as u64
-            };
+            // OPE offset 12 describes result metadata, not the number of rows. It
+            // remains nonzero for an empty SELECT, which would otherwise trigger
+            // an invalid FETCH against a response that is already complete.
+            let mut total = resp.rows.len() as u64;
             if !has_result_set {
                 // DML with trailing messages (rare path)
                 let trailing = self.consume_remaining_ope_messages()?;
-                if resp.row_count == 0 {
+                if total == 0 {
                     total = trailing;
                 }
             }
-            return Ok(ResultSet::with_data(
-                resp.columns,
-                resp.rows,
-                0,
-                total,
-            ));
+            return Ok(ResultSet::with_data(resp.columns, resp.rows, 0, total));
         }
 
         if frame.msg_type == EXEC_RESPONSE || frame.msg_type == 160 {
@@ -1070,7 +1110,8 @@ impl Client {
         {
             if frame.response_code < 0 {
                 return Err(Error::QueryFailed(format!(
-                    "response_code={}", frame.response_code
+                    "response_code={}",
+                    frame.response_code
                 )));
             }
             // If we got an empty ACK, try one more (EXEC_RESPONSE with affected rows in frame header)
@@ -1080,7 +1121,8 @@ impl Client {
                 {
                     if f3.response_code < 0 {
                         return Err(Error::QueryFailed(format!(
-                            "response_code={}", f3.response_code
+                            "response_code={}",
+                            f3.response_code
                         )));
                     }
                     // Affected rows in frame header offset 14-17
@@ -1097,10 +1139,13 @@ impl Client {
     }
 
     /// Try to read a single message with polling.
-/// The `timeout` is the maximum time to wait for data.
-/// Returns None if no message arrives within the timeout.
-/// Some(Ok(...)) on success, Some(Err(...)) on error.
-    fn try_read_message(&mut self, timeout: std::time::Duration) -> Option<Result<(Frame, Vec<u8>)>> {
+    /// The `timeout` is the maximum time to wait for data.
+    /// Returns None if no message arrives within the timeout.
+    /// Some(Ok(...)) on success, Some(Err(...)) on error.
+    fn try_read_message(
+        &mut self,
+        timeout: std::time::Duration,
+    ) -> Option<Result<(Frame, Vec<u8>)>> {
         use std::io::ErrorKind;
 
         let stream = self.stream.as_mut()?;
@@ -1115,7 +1160,8 @@ impl Client {
             if std::time::Instant::now() > deadline {
                 return None;
             }
-            let mut tmp = vec![0u8; 1024];
+            let needed = FRAME_HEADER_SIZE - buf.len();
+            let mut tmp = vec![0u8; needed];
             match stream.read(&mut tmp) {
                 Ok(0) => return None,
                 Ok(n) => buf.extend_from_slice(&tmp[..n]),
@@ -1132,14 +1178,22 @@ impl Client {
         };
 
         // Read payload with polling
-        let body_len = frame.body_len.max(0) as usize;
+        let body_len = match checked_response_body_len(frame.body_len) {
+            Ok(length) => length,
+            Err(error) => return Some(Err(error)),
+        };
         while buf.len() < body_len {
             if std::time::Instant::now() > deadline {
                 return None;
             }
-            let mut tmp = vec![0u8; 1024];
+            let needed = body_len - buf.len();
+            let mut tmp = vec![0u8; needed.min(4096)];
             match stream.read(&mut tmp) {
-                Ok(0) => break,
+                Ok(0) => {
+                    return Some(Err(Error::ConnectionFailed(
+                        "connection closed during payload read".to_string(),
+                    )))
+                }
                 Ok(n) => buf.extend_from_slice(&tmp[..n]),
                 Err(e) if e.kind() == ErrorKind::WouldBlock || e.raw_os_error() == Some(35) => {
                     std::thread::sleep(std::time::Duration::from_millis(10));
@@ -1148,7 +1202,7 @@ impl Client {
             }
         }
 
-        Some(Ok((frame, buf.to_vec())))
+        Some(Ok((frame, buf[..body_len].to_vec())))
     }
 
     /// Execute a SQL SELECT query and return the result set.
@@ -1191,11 +1245,7 @@ impl Client {
         }
 
         // Send FETCH message (msg_type=7)
-        let fetch = FetchMessage::new(
-            start_row as i64,
-            result_set.cursor_id,
-            prefetch_bytes,
-        );
+        let fetch = FetchMessage::new(start_row as i64, result_set.cursor_id, prefetch_bytes);
         let fetch_payload = fetch.encode_payload();
         self.write_all(&build_message(FETCH, self.handle, &fetch_payload))?;
 
@@ -1247,10 +1297,7 @@ impl Client {
     /// Commit the current transaction and re-enable auto-commit.
     pub fn commit(&mut self) -> Result<()> {
         self.do_commit()?;
-        self.auto_commit = true;
-        // COMMIT may also invalidate the server-side statement handle.
-        // Reset to 0 so the next execute() will allocate a fresh one.
-        self.handle = 0;
+        self.complete_transaction();
         Ok(())
     }
 
@@ -1272,11 +1319,12 @@ impl Client {
                 frame.response_code
             )));
         }
-        self.auto_commit = true;
-        // ROLLBACK invalidates the server-side statement handle (-2106).
-        // Reset to 0 so the next execute() will allocate a fresh one.
-        self.handle = 0;
+        self.complete_transaction();
         Ok(())
+    }
+
+    pub(crate) fn complete_transaction(&mut self) {
+        self.auto_commit = true;
     }
 
     /// Read a complete message (frame + payload) from the stream.
@@ -1310,13 +1358,15 @@ impl Client {
                 return Err(Error::ConnectionFailed("connection closed".to_string()));
             }
             // SAFETY: we just read n bytes into the chunk
-            unsafe { buf.advance_mut(n); }
+            unsafe {
+                buf.advance_mut(n);
+            }
         }
 
         let frame = Frame::parse(&mut buf)?;
 
         // Read payload using same zero-copy approach
-        let body_len = frame.body_len.max(0) as usize;
+        let body_len = checked_response_body_len(frame.body_len)?;
         while buf.len() < body_len {
             let needed = body_len - buf.len();
             buf.reserve(needed);
@@ -1339,7 +1389,9 @@ impl Client {
                     "connection closed during payload read".to_string(),
                 ));
             }
-            unsafe { buf.advance_mut(n); }
+            unsafe {
+                buf.advance_mut(n);
+            }
         }
 
         let payload = buf[..body_len].to_vec();
@@ -1392,10 +1444,12 @@ impl Client {
     /// A vector of `(type_code, raw_bytes)` tuples, one per output parameter,
     /// in the same order as the input parameters. Empty byte vectors indicate NULL.
     pub fn read_output_params(&self, params: &[BindParam]) -> Vec<(i32, Vec<u8>)> {
-        params.iter()
+        params
+            .iter()
             .filter(|p| {
                 p.direction == dameng_protocol::message::bind::ParameterDirection::Output
-                    || p.direction == dameng_protocol::message::bind::ParameterDirection::InputOutput
+                    || p.direction
+                        == dameng_protocol::message::bind::ParameterDirection::InputOutput
             })
             .map(|p| {
                 let raw = p.value.clone().unwrap_or_default();
@@ -1432,7 +1486,7 @@ impl Client {
             )));
         }
         let getlen_resp = LobGetLenResponse::from_bytes(&getlen_resp_payload)?;
-        let total_len = getlen_resp.length as usize;
+        let total_len = checked_lob_len(getlen_resp.length)?;
 
         if total_len == 0 {
             return Ok(vec![]);
@@ -1478,6 +1532,11 @@ impl Client {
                 break;
             }
 
+            if result.len().saturating_add(read_resp.data.len()) > MAX_LOB_BYTES {
+                return Err(Error::Protocol(dameng_protocol::Error::InvalidFrame(
+                    format!("LOB content exceeds {MAX_LOB_BYTES} bytes"),
+                )));
+            }
             result.extend_from_slice(&read_resp.data);
 
             // For CLOB: advance by character count (charLen if available)
@@ -1488,7 +1547,11 @@ impl Client {
             }
 
             // Update cursor state from response for next LOBREAD
-            cur_locator.update_cursor(read_resp.cur_file_id, read_resp.cur_page_no, read_resp.total_offset);
+            cur_locator.update_cursor(
+                read_resp.cur_file_id,
+                read_resp.cur_page_no,
+                read_resp.total_offset,
+            );
 
             if read_resp.read_over {
                 break;
@@ -1589,5 +1652,37 @@ mod tests {
         let mut client = Client::new("test", 5236);
         let result = client.ready();
         assert!(matches!(result, Err(Error::NotConnected)));
+    }
+
+    #[test]
+    fn failed_statement_rollback_respects_explicit_transactions() {
+        let mut client = Client::new("test", 5236);
+        assert!(client.should_rollback_failed_statement(false));
+        assert!(!client.should_rollback_failed_statement(true));
+
+        client.auto_commit = false;
+        assert!(!client.should_rollback_failed_statement(false));
+    }
+
+    #[test]
+    fn completing_transaction_preserves_connection_handle() {
+        let mut client = Client::new("test", 5236);
+        client.handle = 42;
+        client.auto_commit = false;
+
+        client.complete_transaction();
+
+        assert!(client.auto_commit);
+        assert_eq!(client.handle, 42);
+    }
+
+    #[test]
+    fn test_lob_length_is_bounded() {
+        assert_eq!(
+            checked_lob_len(MAX_LOB_BYTES as i64).unwrap(),
+            MAX_LOB_BYTES
+        );
+        assert!(checked_lob_len(-1).is_err());
+        assert!(checked_lob_len(MAX_LOB_BYTES as i64 + 1).is_err());
     }
 }

@@ -9,4 +9,5 @@ pub mod message;
 
 pub use error::{Error, Result};
 pub use frame::Frame;
-pub use message::response::{Column, Row, ExecResponse};
+pub use message::explain::ExplainResponse;
+pub use message::response::{Column, ExecResponse, Row};

@@ -105,8 +105,7 @@ impl StartupResponse {
                     data.get(11).copied().unwrap_or(0),
                 ]) as usize;
                 if data.len() > 12 + msg_len {
-                    server_version =
-                        String::from_utf8_lossy(&data[12..12 + msg_len]).to_string();
+                    server_version = String::from_utf8_lossy(&data[12..12 + msg_len]).to_string();
                 }
             }
             return Ok(Self {

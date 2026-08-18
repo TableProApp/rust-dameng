@@ -4,31 +4,33 @@
 //! Messages are organized by their direction (client->server or server->client)
 //! and their purpose in the connection lifecycle.
 
-pub mod startup;
-pub mod login;
-pub mod ready;
-pub mod exec;
 pub mod bind;
-pub mod fetch;
-pub mod transaction;
 pub mod close;
-pub mod response;
+pub mod exec;
+pub mod explain;
+pub mod fetch;
 pub mod isolation;
 pub mod lob;
 pub mod lob_bind;
+pub mod login;
+pub mod ready;
+pub mod response;
+pub mod startup;
+pub mod transaction;
 
-pub use startup::*;
-pub use login::*;
-pub use ready::*;
-pub use exec::*;
 pub use bind::*;
-pub use fetch::*;
-pub use transaction::*;
 pub use close::*;
-pub use response::*;
+pub use exec::*;
+pub use explain::*;
+pub use fetch::*;
 pub use isolation::*;
 pub use lob::*;
 pub use lob_bind::*;
+pub use login::*;
+pub use ready::*;
+pub use response::*;
+pub use startup::*;
+pub use transaction::*;
 
 // Re-export msg_type constants at top level for convenience
 pub use self::msg_type::*;
@@ -60,6 +62,8 @@ pub mod msg_type {
     pub const EXEC: u8 = 5;
     /// EXEC_RESPONSE - Statement result (server->client)
     pub const EXEC_RESPONSE: u8 = 0;
+    /// EXPLAIN_RESPONSE - Text query plan (server->client)
+    pub const EXPLAIN_RESPONSE: u8 = 149;
     /// FETCH - Fetch more rows from result set (client->server)
     pub const FETCH: u8 = 7;
     /// COMMIT - Commit transaction (client->server)
@@ -137,7 +141,6 @@ pub mod language {
 /// Encryption utility functions.
 /// DM uses a simple XOR encryption for credentials.
 pub mod crypto {
-    
 
     /// Generate encrypted credentials using the server's challenge.
     /// The algorithm XORs the plaintext with the challenge bytes, cycling through.

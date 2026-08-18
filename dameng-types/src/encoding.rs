@@ -95,13 +95,22 @@ mod tests {
 
     #[test]
     fn test_from_protocol_value_gb18030() {
-        assert_eq!(ServerEncoding::from_protocol_value(0), ServerEncoding::Gb18030);
-        assert_eq!(ServerEncoding::from_protocol_value(2), ServerEncoding::Gb18030);
+        assert_eq!(
+            ServerEncoding::from_protocol_value(0),
+            ServerEncoding::Gb18030
+        );
+        assert_eq!(
+            ServerEncoding::from_protocol_value(2),
+            ServerEncoding::Gb18030
+        );
     }
 
     #[test]
     fn test_from_protocol_value_default() {
-        assert_eq!(ServerEncoding::from_protocol_value(255), ServerEncoding::Gb18030);
+        assert_eq!(
+            ServerEncoding::from_protocol_value(255),
+            ServerEncoding::Gb18030
+        );
     }
 
     #[test]

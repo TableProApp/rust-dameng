@@ -44,7 +44,7 @@
 //!   For each column: u16 value_size + value_size bytes of data
 
 use crate::error::Result;
-use dameng_types::encoding::{ServerEncoding, decode_from_server};
+use dameng_types::encoding::{decode_from_server, ServerEncoding};
 
 /// LOB_LOCATOR size: DM returns a 16-byte locator for large CLOB/BLOB values.
 /// When the value size exceeds 2048 bytes, DM returns a locator instead of inline data.
@@ -70,7 +70,6 @@ pub fn is_lob_head(data: &[u8], col_type_code: i32) -> bool {
     is_lob_type && data.len() >= 13
 }
 
-
 use dameng_types::{DmValue, DmValueType};
 
 /// Derive type_code from type_name string.
@@ -79,16 +78,22 @@ use dameng_types::{DmValue, DmValueType};
 fn type_name_to_code(name: &str) -> i32 {
     let upper = name.to_uppercase();
     // Check timezone variants first (longer match before shorter)
-    if upper.contains("TIMESTAMP WITH TIME ZONE") || upper.contains("DATETIME WITH TIME ZONE")
-        || upper.contains("DATETIME2_TZ") {
+    if upper.contains("TIMESTAMP WITH TIME ZONE")
+        || upper.contains("DATETIME WITH TIME ZONE")
+        || upper.contains("DATETIME2_TZ")
+    {
         12 // TIMESTAMP_TZ maps to TIMESTAMP (12)
     } else if upper.contains("TIME WITH TIME ZONE") {
         11 // TIME_TZ maps to TIME (11)
-    } else if upper.contains("INTERVAL DAY") || upper.contains("INTERVAL_DS")
-        || upper.contains("NUMTODSINTERVAL") {
+    } else if upper.contains("INTERVAL DAY")
+        || upper.contains("INTERVAL_DS")
+        || upper.contains("NUMTODSINTERVAL")
+    {
         15 // INTERVAL_DT
-    } else if upper.contains("INTERVAL YEAR") || upper.contains("INTERVAL_YM")
-        || upper.contains("NUMTOYMINTERVAL") {
+    } else if upper.contains("INTERVAL YEAR")
+        || upper.contains("INTERVAL_YM")
+        || upper.contains("NUMTOYMINTERVAL")
+    {
         15 // INTERVAL_YM
     } else {
         match upper.as_str() {
@@ -100,7 +105,7 @@ fn type_name_to_code(name: &str) -> i32 {
             "SMALLINT" => 6,
             "FLOAT" => 7,
             "DOUBLE" | "DOUBLE PRECISION" => 8,
-            "DECIMAL" | "NUMERIC" => 9,
+            "DEC" | "DECIMAL" | "NUMERIC" => 9,
             "DATE" => 10,
             "TIME" => 11,
             "TIMESTAMP" | "DATETIME" | "DATETIME2" => 12,
@@ -154,10 +159,9 @@ pub struct Row {
 impl Row {
     /// Get an i32 value at the given column index.
     pub fn get_i32(&self, idx: usize) -> Result<i32> {
-        let val = self.values.get(idx).and_then(|v| v.as_ref())
-            .ok_or(crate::error::Error::DecodeError(format!(
-                "column {} is NULL or out of range", idx
-            )))?;
+        let val = self.values.get(idx).and_then(|v| v.as_ref()).ok_or(
+            crate::error::Error::DecodeError(format!("column {} is NULL or out of range", idx)),
+        )?;
         if val.len() < 4 {
             if val.len() == 1 {
                 return Ok(val[0] as i32);
@@ -166,7 +170,9 @@ impl Row {
                 return Ok(i32::from(i16::from_le_bytes([val[0], val[1]])));
             }
             return Err(crate::error::Error::DecodeError(format!(
-                "column {} too short for i32 ({} bytes)", idx, val.len()
+                "column {} too short for i32 ({} bytes)",
+                idx,
+                val.len()
             )));
         }
         Ok(i32::from_le_bytes([val[0], val[1], val[2], val[3]]))
@@ -174,43 +180,45 @@ impl Row {
 
     /// Get an i64 value at the given column index.
     pub fn get_i64(&self, idx: usize) -> Result<i64> {
-        let val = self.values.get(idx).and_then(|v| v.as_ref())
-            .ok_or(crate::error::Error::DecodeError(format!(
-                "column {} is NULL or out of range", idx
-            )))?;
+        let val = self.values.get(idx).and_then(|v| v.as_ref()).ok_or(
+            crate::error::Error::DecodeError(format!("column {} is NULL or out of range", idx)),
+        )?;
         if val.len() < 8 {
             if val.len() >= 4 {
-                return Ok(i64::from(i32::from_le_bytes([val[0], val[1], val[2], val[3]])));
+                return Ok(i64::from(i32::from_le_bytes([
+                    val[0], val[1], val[2], val[3],
+                ])));
             }
             return Err(crate::error::Error::DecodeError(format!(
-                "column {} too short for i64", idx
+                "column {} too short for i64",
+                idx
             )));
         }
-        Ok(i64::from_le_bytes([val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7]]))
+        Ok(i64::from_le_bytes([
+            val[0], val[1], val[2], val[3], val[4], val[5], val[6], val[7],
+        ]))
     }
 
     /// Get a &str value at the given column index.
     ///
     /// For text types (VARCHAR, CHAR, CLOB) this reads UTF-8 directly.
     pub fn get_str(&self, idx: usize) -> Result<&str> {
-        let val = self.values.get(idx).and_then(|v| v.as_ref())
-            .ok_or(crate::error::Error::DecodeError(format!(
-                "column {} is NULL or out of range", idx
-            )))?;
-        std::str::from_utf8(val).map_err(|e| {
-            crate::error::Error::DecodeError(format!("invalid UTF-8: {}", e))
-        })
+        let val = self.values.get(idx).and_then(|v| v.as_ref()).ok_or(
+            crate::error::Error::DecodeError(format!("column {} is NULL or out of range", idx)),
+        )?;
+        std::str::from_utf8(val)
+            .map_err(|e| crate::error::Error::DecodeError(format!("invalid UTF-8: {}", e)))
     }
 
     /// Get a f64 value at the given column index.
     pub fn get_f64(&self, idx: usize) -> Result<f64> {
-        let val = self.values.get(idx).and_then(|v| v.as_ref())
-            .ok_or(crate::error::Error::DecodeError(format!(
-                "column {} is NULL or out of range", idx
-            )))?;
+        let val = self.values.get(idx).and_then(|v| v.as_ref()).ok_or(
+            crate::error::Error::DecodeError(format!("column {} is NULL or out of range", idx)),
+        )?;
         if val.len() < 8 {
             return Err(crate::error::Error::DecodeError(format!(
-                "column {} too short for f64", idx
+                "column {} too short for f64",
+                idx
             )));
         }
         let bytes: [u8; 8] = val[..8].try_into().unwrap();
@@ -230,10 +238,9 @@ impl Row {
     /// DM encodes TIMESTAMP as 11 bytes: year(2 BE) + month(1) + day(1) + hour(1) + minute(1) + second(1) + nanosecond(4 BE).
     /// Falls back to UTF-8/lossy if the data doesn't match binary format.
     pub fn get_timestamp(&self, idx: usize) -> Result<String> {
-        let val = self.values.get(idx).and_then(|v| v.as_ref())
-            .ok_or(crate::error::Error::DecodeError(format!(
-                "column {} is NULL or out of range", idx
-            )))?;
+        let val = self.values.get(idx).and_then(|v| v.as_ref()).ok_or(
+            crate::error::Error::DecodeError(format!("column {} is NULL or out of range", idx)),
+        )?;
 
         if val.len() == 11 {
             let year = u16::from_be_bytes([val[0], val[1]]) as i32;
@@ -274,10 +281,9 @@ impl Row {
 
     /// Get a DATE value at the given column index as a human-readable string.
     pub fn get_date(&self, idx: usize) -> Result<String> {
-        let val = self.values.get(idx).and_then(|v| v.as_ref())
-            .ok_or(crate::error::Error::DecodeError(format!(
-                "column {} is NULL or out of range", idx
-            )))?;
+        let val = self.values.get(idx).and_then(|v| v.as_ref()).ok_or(
+            crate::error::Error::DecodeError(format!("column {} is NULL or out of range", idx)),
+        )?;
 
         if val.len() == 7 {
             let year = u16::from_be_bytes([val[0], val[1]]) as i32;
@@ -324,16 +330,16 @@ impl Row {
 
     /// Get an i16 value at the given column index.
     pub fn get_i16(&self, idx: usize) -> Result<i16> {
-        let val = self.values.get(idx).and_then(|v| v.as_ref())
-            .ok_or(crate::error::Error::DecodeError(format!(
-                "column {} is NULL or out of range", idx
-            )))?;
+        let val = self.values.get(idx).and_then(|v| v.as_ref()).ok_or(
+            crate::error::Error::DecodeError(format!("column {} is NULL or out of range", idx)),
+        )?;
         if val.len() < 2 {
             if val.len() == 1 {
                 return Ok(val[0] as i16);
             }
             return Err(crate::error::Error::DecodeError(format!(
-                "column {} too short for i16", idx
+                "column {} too short for i16",
+                idx
             )));
         }
         Ok(i16::from_le_bytes([val[0], val[1]]))
@@ -341,13 +347,13 @@ impl Row {
 
     /// Get an i8 value at the given column index.
     pub fn get_i8(&self, idx: usize) -> Result<i8> {
-        let val = self.values.get(idx).and_then(|v| v.as_ref())
-            .ok_or(crate::error::Error::DecodeError(format!(
-                "column {} is NULL or out of range", idx
-            )))?;
+        let val = self.values.get(idx).and_then(|v| v.as_ref()).ok_or(
+            crate::error::Error::DecodeError(format!("column {} is NULL or out of range", idx)),
+        )?;
         if val.is_empty() {
             return Err(crate::error::Error::DecodeError(format!(
-                "column {} is NULL", idx
+                "column {} is NULL",
+                idx
             )));
         }
         Ok(val[0] as i8)
@@ -355,13 +361,13 @@ impl Row {
 
     /// Get a f32 value at the given column index.
     pub fn get_f32(&self, idx: usize) -> Result<f32> {
-        let val = self.values.get(idx).and_then(|v| v.as_ref())
-            .ok_or(crate::error::Error::DecodeError(format!(
-                "column {} is NULL or out of range", idx
-            )))?;
+        let val = self.values.get(idx).and_then(|v| v.as_ref()).ok_or(
+            crate::error::Error::DecodeError(format!("column {} is NULL or out of range", idx)),
+        )?;
         if val.len() < 4 {
             return Err(crate::error::Error::DecodeError(format!(
-                "column {} too short for f32", idx
+                "column {} too short for f32",
+                idx
             )));
         }
         Ok(f32::from_le_bytes([val[0], val[1], val[2], val[3]]))
@@ -373,7 +379,8 @@ impl Row {
             Some(Some(v)) => Ok(v.clone()),
             Some(None) => Ok(vec![]),
             None => Err(crate::error::Error::DecodeError(format!(
-                "column {} out of range", idx
+                "column {} out of range",
+                idx
             ))),
         }
     }
@@ -397,9 +404,11 @@ impl Row {
     /// Get an Option<&str> at the given column index (NULL-safe).
     pub fn get_opt_str(&self, idx: usize) -> Result<Option<&str>> {
         match self.values.get(idx) {
-            Some(Some(v)) if !v.is_empty() => Ok(Some(std::str::from_utf8(v).map_err(|e| {
-                crate::error::Error::DecodeError(format!("invalid UTF-8: {}", e))
-            })?)),
+            Some(Some(v)) if !v.is_empty() => {
+                Ok(Some(std::str::from_utf8(v).map_err(|e| {
+                    crate::error::Error::DecodeError(format!("invalid UTF-8: {}", e))
+                })?))
+            }
             _ => Ok(None),
         }
     }
@@ -444,29 +453,82 @@ pub struct ExecResponse {
 }
 
 /// Decode DM binary DECIMAL to text representation.
-fn decode_dm_decimal_to_text(data: &[u8], scale: i16) -> Option<String> {
+fn decode_dm_decimal_to_text(data: &[u8], _scale: i16) -> Option<String> {
     const FLAG_ZERO: u8 = 0x80;
     const FLAG_POSITIVE: i32 = 0xC1;
     const FLAG_NEGTIVE: i32 = 0x3E;
     const NUM_POSITIVE: i32 = 1;
     const NUM_NEGTIVE: i32 = 101;
-    if data.is_empty() || data.len() > 21 { return None; }
-    if data[0] == FLAG_ZERO || data.len() == 1 { return Some("0".to_string()); }
-    let sign = if data[0] & FLAG_ZERO != 0 { "" } else { "-" };
+    if data.is_empty() || data.len() > 21 {
+        return None;
+    }
+    if data[0] == FLAG_ZERO || data.len() == 1 {
+        return Some("0".to_string());
+    }
+    let is_positive = data[0] & FLAG_ZERO != 0;
     let flag = data[0] as i32;
-    let _exp = if !sign.is_empty() { flag - FLAG_POSITIVE } else { FLAG_NEGTIVE - flag };
-    let mut sf = String::new();
+    let exponent = if is_positive {
+        flag - FLAG_POSITIVE
+    } else {
+        FLAG_NEGTIVE - flag
+    };
+    let mut digits = Vec::with_capacity(data.len() - 1);
     for &b in &data[1..] {
-        let digit = if sign.is_empty() {
+        let digit = if is_positive {
             b as i32 - NUM_POSITIVE
         } else {
             NUM_NEGTIVE - b as i32
         };
-        if digit < 0 || digit > 99 { break; }
-        sf.push_str(&format!("{:02}", digit));
+        if digit < 0 || digit > 99 {
+            break;
+        }
+        digits.push(digit);
     }
-    if sf.is_empty() { return None; }
-    Some(format!("{}{}", sign, sf.trim_start_matches('0')))
+    if digits.is_empty() {
+        return None;
+    }
+
+    let decimal_group = exponent + 1;
+    let mut value = String::new();
+    if !is_positive {
+        value.push('-');
+    }
+    if decimal_group <= 0 {
+        value.push_str("0.");
+        for _ in 0..-decimal_group {
+            value.push_str("00");
+        }
+        for digit in digits {
+            value.push_str(&format!("{digit:02}"));
+        }
+    } else {
+        for index in 0..decimal_group as usize {
+            if index < digits.len() {
+                if index == 0 {
+                    value.push_str(&digits[index].to_string());
+                } else {
+                    value.push_str(&format!("{:02}", digits[index]));
+                }
+            } else {
+                value.push_str("00");
+            }
+        }
+        if (decimal_group as usize) < digits.len() {
+            value.push('.');
+            for digit in &digits[decimal_group as usize..] {
+                value.push_str(&format!("{digit:02}"));
+            }
+        }
+    }
+    if value.contains('.') {
+        while value.ends_with('0') {
+            value.pop();
+        }
+        if value.ends_with('.') {
+            value.pop();
+        }
+    }
+    Some(value)
 }
 
 impl ExecResponse {
@@ -572,8 +634,8 @@ impl ExecResponse {
         }
 
         // === Subsequent Columns ===
-        // For sub_type=7 (full SELECT), OPE(91) may report col_count=1 even for
-        // multi-column queries. Parse columns dynamically until we hit row data.
+        // OPE(91) may report col_count=1 even for multi-column queries regardless
+        // of the response sub-type, so parse columns dynamically until row data.
         //
         // When col_count == 0 (BIND_EXEC2 path for SELECT with params), the server
         // sends NO inline column metadata or row data — the data must be fetched
@@ -594,11 +656,15 @@ impl ExecResponse {
         //  28   u16  table_name_len
         //  30   u16  schema_name_len
         //  32   [col_name][type_name][table_name][schema_name] (no null terminator)
-        let use_dynamic = sub_type == 7 && col_count > 0;
+        let use_dynamic = col_count > 0;
         // When col_count == 0 (BIND_EXEC2 SELECT path), all columns use the
         // expanded 32-byte format starting at offset 16 (no compact first-column header).
         // We reuse the dynamic parser logic with col_count as the parsed count.
-        let max_cols = if use_dynamic { 32 } else { (col_count as usize).max(columns.len()) };
+        let max_cols = if use_dynamic {
+            4_096
+        } else {
+            (col_count as usize).max(columns.len())
+        };
         let mut _parsed_cols = columns.len() as usize;
         // For BIND_EXEC2 (col_count == 0), start parsing at offset 16 (right after header),
         // reusing the expanded column parser loop below.
@@ -628,29 +694,58 @@ impl ExecResponse {
 
             // Expanded 32-byte header for subsequent columns
             let _c_type = i32::from_le_bytes([
-                data[header_off], data[header_off + 1],
-                data[header_off + 2], data[header_off + 3],
+                data[header_off],
+                data[header_off + 1],
+                data[header_off + 2],
+                data[header_off + 3],
             ]);
             // If c_type is 0 or invalid, we've hit row data — stop parsing columns
-            if _c_type == 0 || _c_type < -100 || _c_type > 100 {
+            if !(1..=31).contains(&_c_type) {
                 offset = row_start;
                 break;
             }
-            // precision/scale at offsets 4-11, not needed for basic parsing
+            let c_precision = u32::from_le_bytes([
+                data[header_off + 4],
+                data[header_off + 5],
+                data[header_off + 6],
+                data[header_off + 7],
+            ]);
+            let c_scale = i32::from_le_bytes([
+                data[header_off + 8],
+                data[header_off + 9],
+                data[header_off + 10],
+                data[header_off + 11],
+            ]);
+            if c_precision > 1_000_000 || !(-1_000..=1_000).contains(&c_scale) {
+                offset = row_start;
+                break;
+            }
             let c_nullable = u32::from_le_bytes([
-                data[header_off + 12], data[header_off + 13],
-                data[header_off + 14], data[header_off + 15],
+                data[header_off + 12],
+                data[header_off + 13],
+                data[header_off + 14],
+                data[header_off + 15],
             ]);
             // reserved at offsets 16-23 (4 bytes + 2 u16)
 
             // Length fields at offsets 24-31
-            let c_name_len = u16::from_le_bytes([data[header_off + 24], data[header_off + 25]]) as usize;
-            let c_type_name_len = u16::from_le_bytes([data[header_off + 26], data[header_off + 27]]) as usize;
-            let c_table_len = u16::from_le_bytes([data[header_off + 28], data[header_off + 29]]) as usize;
-            let c_schema_len = u16::from_le_bytes([data[header_off + 30], data[header_off + 31]]) as usize;
+            let c_name_len =
+                u16::from_le_bytes([data[header_off + 24], data[header_off + 25]]) as usize;
+            let c_type_name_len =
+                u16::from_le_bytes([data[header_off + 26], data[header_off + 27]]) as usize;
+            let c_table_len =
+                u16::from_le_bytes([data[header_off + 28], data[header_off + 29]]) as usize;
+            let c_schema_len =
+                u16::from_le_bytes([data[header_off + 30], data[header_off + 31]]) as usize;
 
             // Validate lengths — if unreasonable, we've hit row data
-            if c_name_len > 128 || c_type_name_len > 128 || c_table_len > 128 || c_schema_len > 128 {
+            if c_name_len == 0
+                || c_type_name_len == 0
+                || c_name_len > 128
+                || c_type_name_len > 128
+                || c_table_len > 128
+                || c_schema_len > 128
+            {
                 offset = row_start;
                 break;
             }
@@ -667,17 +762,23 @@ impl ExecResponse {
 
             let c_type_name = if c_type_name_len > 0 && offset + c_type_name_len <= data.len() {
                 decode_from_server(server_encoding, &data[offset..offset + c_type_name_len])
-            } else { String::new() };
+            } else {
+                String::new()
+            };
             offset += c_type_name_len;
 
             let c_table = if c_table_len > 0 && offset + c_table_len <= data.len() {
                 decode_from_server(server_encoding, &data[offset..offset + c_table_len])
-            } else { String::new() };
+            } else {
+                String::new()
+            };
             offset += c_table_len;
 
             let c_schema = if c_schema_len > 0 && offset + c_schema_len <= data.len() {
                 decode_from_server(server_encoding, &data[offset..offset + c_schema_len])
-            } else { String::new() };
+            } else {
+                String::new()
+            };
             offset += c_schema_len;
 
             // For sub_type=7, the 32-byte header c_type field is unreliable for
@@ -687,10 +788,7 @@ impl ExecResponse {
 
             // Read itemFlag (offset 16-17 within the 32-byte header) to detect LOB columns.
             // itemFlag bits: 0x01=identity, 0x02=lob, 0x04=readonly
-            let item_flag = u16::from_le_bytes([
-                data[header_off + 16],
-                data[header_off + 17],
-            ]);
+            let item_flag = u16::from_le_bytes([data[header_off + 16], data[header_off + 17]]);
             let is_lob = (item_flag & 0x02) != 0;
 
             // For LOB columns, DM appends lobTabId (i32 LE) + lobColId (i16 LE) after the strings.
@@ -730,7 +828,14 @@ impl ExecResponse {
         //   sub_type=2: compact format (V$VERSION style) - marker(1)+flags(1)+val_size(2)+value(N)
         //   sub_type=7: full format (SELECT style) - row_hdr+col_offsets+values
         let mut rows = Vec::new();
-        if sub_type == 2 {
+        if columns.is_empty() {
+            return Ok(Self {
+                col_count,
+                row_count: header_row_count,
+                columns,
+                rows,
+            });
+        } else if sub_type == 2 && columns.len() == 1 {
             // Compact row format (V$VERSION style):
             // Each row: marker(0x0C) + flags(1) + val_size(2) + value(N) + padding
             while offset + 4 <= data.len() && data[offset] != 0x0C {
@@ -740,7 +845,9 @@ impl ExecResponse {
                 let row_start = offset;
                 let _flags = data[offset + 1];
                 let val_size = u16::from_le_bytes([data[offset + 2], data[offset + 3]]) as usize;
-                if val_size == 0 || offset + 4 + val_size > data.len() { break; }
+                if val_size == 0 || offset + 4 + val_size > data.len() {
+                    break;
+                }
                 let value_bytes = data[offset + 4..offset + 4 + val_size].to_vec();
                 let next_scan = offset + 4 + val_size;
                 let mut found = false;
@@ -751,7 +858,9 @@ impl ExecResponse {
                         break;
                     }
                 }
-                if !found { offset = data.len(); }
+                if !found {
+                    offset = data.len();
+                }
                 let mut values = Vec::with_capacity(columns.len());
                 values.push(Some(value_bytes));
                 for _ in 1..columns.len() {
@@ -766,13 +875,18 @@ impl ExecResponse {
                         }
                     } else if matches!(columns[ci].type_code, 9 | 20) {
                         if let Some(ref val_bytes) = values[ci] {
-                            if let Some(text) = decode_dm_decimal_to_text(val_bytes, columns[ci].scale) {
+                            if let Some(text) =
+                                decode_dm_decimal_to_text(val_bytes, columns[ci].scale)
+                            {
                                 values[ci] = Some(text.into_bytes());
                             }
                         }
                     }
                 }
-                rows.push(Row { row_id: row_start as u16, values });
+                rows.push(Row {
+                    row_id: row_start as u16,
+                    values,
+                });
             }
         } else {
             // Full row format (sub_type=7 and others)
@@ -784,7 +898,10 @@ impl ExecResponse {
                 let _row_size = data[offset]; // Present but unreliable for advancement
                 let _flags = data[offset + 1];
                 let rec_id = u32::from_le_bytes([
-                    data[offset + 2], data[offset + 3], data[offset + 4], data[offset + 5],
+                    data[offset + 2],
+                    data[offset + 3],
+                    data[offset + 4],
+                    data[offset + 5],
                 ]);
 
                 // Column offset table: col_count x 2 bytes, starting at row_start + 10
@@ -794,7 +911,9 @@ impl ExecResponse {
                         let o = offsets_start + c * 2;
                         if o + 2 <= data.len() {
                             u16::from_le_bytes([data[o], data[o + 1]])
-                        } else { 0 }
+                        } else {
+                            0
+                        }
                     })
                     .collect();
 
@@ -813,7 +932,9 @@ impl ExecResponse {
                     } else if val_abs + 2 + val_size <= data.len() {
                         values.push(Some(data[val_abs + 2..val_abs + 2 + val_size].to_vec()));
                         let val_end = val_abs + 2 + val_size;
-                        if val_end > row_end { row_end = val_end; }
+                        if val_end > row_end {
+                            row_end = val_end;
+                        }
                     } else {
                         values.push(None);
                     }
@@ -833,13 +954,18 @@ impl ExecResponse {
                         }
                     } else if matches!(columns[ci].type_code, 9 | 20) {
                         if let Some(ref val_bytes) = values[ci] {
-                            if let Some(text) = decode_dm_decimal_to_text(val_bytes, columns[ci].scale) {
+                            if let Some(text) =
+                                decode_dm_decimal_to_text(val_bytes, columns[ci].scale)
+                            {
                                 values[ci] = Some(text.into_bytes());
                             }
                         }
                     }
                 }
-                rows.push(Row { row_id: rec_id as u16, values });
+                rows.push(Row {
+                    row_id: rec_id as u16,
+                    values,
+                });
             }
         }
 
@@ -855,7 +981,12 @@ impl ExecResponse {
     #[allow(dead_code)]
     fn safe_u32(data: &[u8], offset: usize) -> u32 {
         if offset + 4 <= data.len() {
-            u32::from_le_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
+            u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ])
         } else {
             0
         }
@@ -957,12 +1088,12 @@ mod tests {
             0x00, 0x00, 0x00, 0x00, // reserved
             0x00, 0x00, 0x00, 0x00, // row_count = 0
             0x00, 0x00, 0x00, 0x00, // col_type = 0
-            0x00, 0x00,             // nullable
-            0x00, 0x00,             // display
-            0x00, 0x00,             // col_count = 0
-            0x00, 0x00,             // type_name_len
-            0x00, 0x00,             // table_name_len
-            0x00, 0x00,             // schema_name_len
+            0x00, 0x00, // nullable
+            0x00, 0x00, // display
+            0x00, 0x00, // col_count = 0
+            0x00, 0x00, // type_name_len
+            0x00, 0x00, // table_name_len
+            0x00, 0x00, // schema_name_len
         ];
         let resp = ExecResponse::from_bytes(&data, ServerEncoding::Utf8).unwrap();
         assert_eq!(resp.col_count, 0);
@@ -974,11 +1105,16 @@ mod tests {
     fn test_exec_response_select1_ope() {
         // OPE response for "SELECT 1 FROM DUAL" (58 bytes)
         let data: Vec<u8> = vec![
-            0x07,0x00,0x00,0x00, 0x04,0x00,0x00,0x00, 0x00,0x00,0x00,0x00, 0x01,0x00,0x00,0x00, // header (row_count=1)
-            0x04,0x00,0x00,0x00, 0x00,0x00, 0x01,0x00, 0x01,0x00, 0x07,0x00, 0x00,0x00, 0x00,0x00, // col1 header (type=4, nullable=0, col_count=1, col_name_len=1, type_name_len=7)
-            0x31,0x49,0x4e,0x54,0x45,0x47,0x45,0x52, 0x00, // col1 strings: "1" + "INTEGER" + \0
+            0x07, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x00, 0x00, // header (row_count=1)
+            0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x07, 0x00, 0x00, 0x00,
+            0x00,
+            0x00, // col1 header (type=4, nullable=0, col_count=1, col_name_len=1, type_name_len=7)
+            0x31, 0x49, 0x4e, 0x54, 0x45, 0x47, 0x45, 0x52,
+            0x00, // col1 strings: "1" + "INTEGER" + \0
             // Row data (18 bytes): marker=18, flags=0, rec_id=0, padding=0, col_off=12, val_size=4, val=1
-            0x12, 0x00, 0x00,0x00,0x00,0x00, 0x00,0x00, 0x00,0x00, 0x0c,0x00, 0x04,0x00, 0x01,0x00,0x00,0x00,
+            0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x04, 0x00,
+            0x01, 0x00, 0x00, 0x00,
         ];
         let resp = ExecResponse::from_bytes(&data, ServerEncoding::Utf8).unwrap();
         assert_eq!(resp.col_count, 1);
@@ -994,16 +1130,15 @@ mod tests {
     fn test_exec_response_select1_ope_no_null_term() {
         // Actual OPE response from DM 8.1.3.62 - no \0 terminator (58 bytes)
         let data: Vec<u8> = vec![
-            0x07, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, // header (row_count=1)
-            0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
-            0x01, 0x00, 0x07, 0x00, 0x00, 0x00, 0x00, 0x00, // col1 header (type=4, nullable=0, col_count=1, col_name_len=1)
+            0x07, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x00, 0x00, // header (row_count=1)
+            0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 0x07, 0x00, 0x00, 0x00,
+            0x00, 0x00, // col1 header (type=4, nullable=0, col_count=1, col_name_len=1)
             // Strings: "1" + "INTEGER" (no \0 terminator!)
             0x31, 0x49, 0x4e, 0x54, 0x45, 0x47, 0x45, 0x52,
             // Row data: marker=18, flags=0, rec_id=0, padding=0, col_off=12, val_size=4, val=1
-            0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x0c, 0x00, 0x04, 0x00, 0x01, 0x00,
-            0x00, 0x00,
+            0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x04, 0x00,
+            0x01, 0x00, 0x00, 0x00,
         ];
         let resp = ExecResponse::from_bytes(&data, ServerEncoding::Utf8).unwrap();
         assert_eq!(resp.col_count, 1);
@@ -1013,6 +1148,54 @@ mod tests {
         assert_eq!(resp.columns[0].type_name, "INTEGER");
         assert_eq!(resp.columns[0].type_code, 4);
         assert_eq!(resp.rows[0].get_i32(0).unwrap(), 1);
+    }
+
+    #[test]
+    fn test_exec_response_subtype2_with_multiple_columns() {
+        // Captured from DM8 for SELECT NAME, NAME FROM a one-row table. DM reports
+        // col_count=1 even though a second expanded column header follows.
+        let data: Vec<u8> = vec![
+            0x02, 0x00, 0x00, 0x00, 0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x04, 0x00, 0x07, 0x00,
+            0x11, 0x00, 0x06, 0x00, 0x4e, 0x41, 0x4d, 0x45, 0x56, 0x41, 0x52, 0x43, 0x48, 0x41,
+            0x52, 0x54, 0x41, 0x42, 0x4c, 0x45, 0x50, 0x52, 0x4f, 0x5f, 0x4c, 0x4f, 0x42, 0x5f,
+            0x54, 0x45, 0x53, 0x54, 0x53, 0x59, 0x53, 0x44, 0x42, 0x41, 0x02, 0x00, 0x00, 0x00,
+            0x64, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x04, 0x00, 0x07, 0x00, 0x11, 0x00, 0x06, 0x00,
+            0x4e, 0x41, 0x4d, 0x45, 0x56, 0x41, 0x52, 0x43, 0x48, 0x41, 0x52, 0x54, 0x41, 0x42,
+            0x4c, 0x45, 0x50, 0x52, 0x4f, 0x5f, 0x4c, 0x4f, 0x42, 0x5f, 0x54, 0x45, 0x53, 0x54,
+            0x53, 0x59, 0x53, 0x44, 0x42, 0x41, 0x1c, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x0e, 0x00, 0x15, 0x00, 0x05, 0x00, 0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x05,
+            0x00, 0x68, 0x65, 0x6c, 0x6c, 0x6f,
+        ];
+
+        let resp = ExecResponse::from_bytes(&data, ServerEncoding::Utf8).unwrap();
+
+        assert_eq!(resp.col_count, 1);
+        assert_eq!(resp.num_columns(), 2);
+        assert_eq!(resp.num_rows(), 1);
+        assert_eq!(resp.rows[0].get_str(0).unwrap(), "hello");
+        assert_eq!(resp.rows[0].get_str(1).unwrap(), "hello");
+    }
+
+    #[test]
+    fn test_decode_dm_decimal_to_text_honors_exponent() {
+        assert_eq!(
+            decode_dm_decimal_to_text(&[0xc2, 0x02], 0).as_deref(),
+            Some("100")
+        );
+        assert_eq!(
+            decode_dm_decimal_to_text(&[0xc2, 0x52, 0x59], 0).as_deref(),
+            Some("8188")
+        );
+        assert_eq!(
+            decode_dm_decimal_to_text(&[0xc1, 0x02, 0x18], 0).as_deref(),
+            Some("1.23")
+        );
+        assert_eq!(
+            decode_dm_decimal_to_text(&[0x3e, 0x64, 0x4e, 0x66], 0).as_deref(),
+            Some("-1.23")
+        );
     }
 
     #[test]

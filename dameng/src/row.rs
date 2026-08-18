@@ -126,11 +126,12 @@ pub trait DmDecode<'de>: Sized {
 
 impl<'de> DmDecode<'de> for bool {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
-            return Err(crate::error::Error::DecodeError("column value is empty".to_string()));
+            return Err(crate::error::Error::DecodeError(
+                "column value is empty".to_string(),
+            ));
         }
         Ok(bytes[0] != 0)
     }
@@ -138,11 +139,12 @@ impl<'de> DmDecode<'de> for bool {
 
 impl<'de> DmDecode<'de> for i32 {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
-            return Err(crate::error::Error::DecodeError("column value is empty".to_string()));
+            return Err(crate::error::Error::DecodeError(
+                "column value is empty".to_string(),
+            ));
         }
         if bytes.len() < 4 {
             if bytes.len() == 1 {
@@ -152,7 +154,8 @@ impl<'de> DmDecode<'de> for i32 {
                 return Ok(i32::from(i16::from_le_bytes([bytes[0], bytes[1]])));
             }
             return Err(crate::error::Error::DecodeError(format!(
-                "too short for i32: {} bytes", bytes.len()
+                "too short for i32: {} bytes",
+                bytes.len()
             )));
         }
         let arr: [u8; 4] = bytes[..4].try_into().unwrap();
@@ -162,11 +165,12 @@ impl<'de> DmDecode<'de> for i32 {
 
 impl<'de> DmDecode<'de> for i64 {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
-            return Err(crate::error::Error::DecodeError("column value is empty".to_string()));
+            return Err(crate::error::Error::DecodeError(
+                "column value is empty".to_string(),
+            ));
         }
         if bytes.len() < 8 {
             if bytes.len() >= 4 {
@@ -174,7 +178,8 @@ impl<'de> DmDecode<'de> for i64 {
                 return Ok(i64::from(i32::from_le_bytes(arr)));
             }
             return Err(crate::error::Error::DecodeError(format!(
-                "too short for i64: {} bytes", bytes.len()
+                "too short for i64: {} bytes",
+                bytes.len()
             )));
         }
         let arr: [u8; 8] = bytes[..8].try_into().unwrap();
@@ -184,18 +189,20 @@ impl<'de> DmDecode<'de> for i64 {
 
 impl<'de> DmDecode<'de> for i16 {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
-            return Err(crate::error::Error::DecodeError("column value is empty".to_string()));
+            return Err(crate::error::Error::DecodeError(
+                "column value is empty".to_string(),
+            ));
         }
         if bytes.len() < 2 {
             if bytes.len() == 1 {
                 return Ok(bytes[0] as i16);
             }
             return Err(crate::error::Error::DecodeError(format!(
-                "too short for i16: {} bytes", bytes.len()
+                "too short for i16: {} bytes",
+                bytes.len()
             )));
         }
         Ok(i16::from_le_bytes([bytes[0], bytes[1]]))
@@ -204,11 +211,12 @@ impl<'de> DmDecode<'de> for i16 {
 
 impl<'de> DmDecode<'de> for i8 {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
-            return Err(crate::error::Error::DecodeError("column is NULL".to_string()));
+            return Err(crate::error::Error::DecodeError(
+                "column is NULL".to_string(),
+            ));
         }
         Ok(bytes[0] as i8)
     }
@@ -216,11 +224,12 @@ impl<'de> DmDecode<'de> for i8 {
 
 impl<'de> DmDecode<'de> for u32 {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
-            return Err(crate::error::Error::DecodeError("column value is empty".to_string()));
+            return Err(crate::error::Error::DecodeError(
+                "column value is empty".to_string(),
+            ));
         }
         if bytes.len() < 4 {
             if bytes.len() == 1 {
@@ -230,7 +239,8 @@ impl<'de> DmDecode<'de> for u32 {
                 return Ok(u16::from_le_bytes([bytes[0], bytes[1]]) as u32);
             }
             return Err(crate::error::Error::DecodeError(format!(
-                "too short for u32: {} bytes", bytes.len()
+                "too short for u32: {} bytes",
+                bytes.len()
             )));
         }
         let arr: [u8; 4] = bytes[..4].try_into().unwrap();
@@ -240,11 +250,12 @@ impl<'de> DmDecode<'de> for u32 {
 
 impl<'de> DmDecode<'de> for u64 {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
-            return Err(crate::error::Error::DecodeError("column value is empty".to_string()));
+            return Err(crate::error::Error::DecodeError(
+                "column value is empty".to_string(),
+            ));
         }
         if bytes.len() < 8 {
             if bytes.len() >= 4 {
@@ -252,7 +263,8 @@ impl<'de> DmDecode<'de> for u64 {
                 return Ok(u32::from_le_bytes(arr) as u64);
             }
             return Err(crate::error::Error::DecodeError(format!(
-                "too short for u64: {} bytes", bytes.len()
+                "too short for u64: {} bytes",
+                bytes.len()
             )));
         }
         let arr: [u8; 8] = bytes[..8].try_into().unwrap();
@@ -262,18 +274,20 @@ impl<'de> DmDecode<'de> for u64 {
 
 impl<'de> DmDecode<'de> for u16 {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
-            return Err(crate::error::Error::DecodeError("column value is empty".to_string()));
+            return Err(crate::error::Error::DecodeError(
+                "column value is empty".to_string(),
+            ));
         }
         if bytes.len() < 2 {
             if bytes.len() == 1 {
                 return Ok(bytes[0] as u16);
             }
             return Err(crate::error::Error::DecodeError(format!(
-                "too short for u16: {} bytes", bytes.len()
+                "too short for u16: {} bytes",
+                bytes.len()
             )));
         }
         Ok(u16::from_le_bytes([bytes[0], bytes[1]]))
@@ -282,11 +296,12 @@ impl<'de> DmDecode<'de> for u16 {
 
 impl<'de> DmDecode<'de> for u8 {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
-            return Err(crate::error::Error::DecodeError("column is NULL".to_string()));
+            return Err(crate::error::Error::DecodeError(
+                "column is NULL".to_string(),
+            ));
         }
         Ok(bytes[0])
     }
@@ -294,12 +309,12 @@ impl<'de> DmDecode<'de> for u8 {
 
 impl<'de> DmDecode<'de> for f64 {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.len() < 8 {
             return Err(crate::error::Error::DecodeError(format!(
-                "too short for f64: {} bytes", bytes.len()
+                "too short for f64: {} bytes",
+                bytes.len()
             )));
         }
         let arr: [u8; 8] = bytes[..8].try_into().unwrap();
@@ -309,12 +324,12 @@ impl<'de> DmDecode<'de> for f64 {
 
 impl<'de> DmDecode<'de> for f32 {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.len() < 4 {
             return Err(crate::error::Error::DecodeError(format!(
-                "too short for f32: {} bytes", bytes.len()
+                "too short for f32: {} bytes",
+                bytes.len()
             )));
         }
         let arr: [u8; 4] = bytes[..4].try_into().unwrap();
@@ -325,24 +340,21 @@ impl<'de> DmDecode<'de> for f32 {
 /// Returns a borrowed string from the row's raw value bytes.
 impl<'de> DmDecode<'de> for &'de str {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
             return Ok("");
         }
-        std::str::from_utf8(bytes).map_err(|e| {
-            crate::error::Error::DecodeError(format!("invalid UTF-8: {}", e))
-        })
+        std::str::from_utf8(bytes)
+            .map_err(|e| crate::error::Error::DecodeError(format!("invalid UTF-8: {}", e)))
     }
 }
 
 /// Returns an owned String.
 impl<'de> DmDecode<'de> for String {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         Ok(String::from_utf8_lossy(bytes).into_owned())
     }
 }
@@ -350,9 +362,8 @@ impl<'de> DmDecode<'de> for String {
 /// Returns a Decimal from DECIMAL type (text, already decoded in response parser).
 impl<'de> DmDecode<'de> for rust_decimal::Decimal {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         let s = std::str::from_utf8(bytes).map_err(|_| {
             crate::error::Error::DecodeError("DECIMAL is not valid UTF-8".to_string())
         })?;
@@ -369,11 +380,12 @@ impl<'de> DmDecode<'de> for rust_decimal::Decimal {
 /// Returns a NaiveDate from DATE type.
 impl<'de> DmDecode<'de> for chrono::NaiveDate {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
-            return Err(crate::error::Error::DecodeError("column value is empty".to_string()));
+            return Err(crate::error::Error::DecodeError(
+                "column value is empty".to_string(),
+            ));
         }
         // Try text format first
         if let Ok(s) = std::str::from_utf8(bytes) {
@@ -409,18 +421,21 @@ impl<'de> DmDecode<'de> for chrono::NaiveDate {
                 return Ok(d);
             }
         }
-        Err(crate::error::Error::DecodeError("too short for DATE".to_string()))
+        Err(crate::error::Error::DecodeError(
+            "too short for DATE".to_string(),
+        ))
     }
 }
 
 /// Returns a NaiveDateTime from TIMESTAMP type.
 impl<'de> DmDecode<'de> for chrono::NaiveDateTime {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
-        let bytes = value.ok_or_else(|| {
-            crate::error::Error::DecodeError("column is NULL".to_string())
-        })?;
+        let bytes =
+            value.ok_or_else(|| crate::error::Error::DecodeError("column is NULL".to_string()))?;
         if bytes.is_empty() {
-            return Err(crate::error::Error::DecodeError("column value is empty".to_string()));
+            return Err(crate::error::Error::DecodeError(
+                "column value is empty".to_string(),
+            ));
         }
         // Try text format first
         if let Ok(s) = std::str::from_utf8(bytes) {
@@ -455,14 +470,19 @@ impl<'de> DmDecode<'de> for chrono::NaiveDateTime {
             let hour = bytes[3] as u32 & 0x1F;
             let minute = ((bytes[3] as u32 >> 5) & 0x07) + ((bytes[4] as u32 & 0x07) << 3);
             let second = ((bytes[4] as u32 >> 3) & 0x1F) + ((bytes[5] as u32 & 0x01) << 5);
-            let nano = (((bytes[5] as u32 >> 1) & 0x7F) + ((bytes[6] as u32 & 0xFF) << 7) + ((bytes[7] as u32 & 0x1F) << 15)) * 1000;
+            let nano = (((bytes[5] as u32 >> 1) & 0x7F)
+                + ((bytes[6] as u32 & 0xFF) << 7)
+                + ((bytes[7] as u32 & 0x1F) << 15))
+                * 1000;
             if let Some(d) = chrono::NaiveDate::from_ymd_opt(year, month, day)
                 .and_then(|d| d.and_hms_nano_opt(hour, minute, second, nano))
             {
                 return Ok(d);
             }
         }
-        Err(crate::error::Error::DecodeError("too short for TIMESTAMP".to_string()))
+        Err(crate::error::Error::DecodeError(
+            "too short for TIMESTAMP".to_string(),
+        ))
     }
 }
 
@@ -507,9 +527,7 @@ impl_dm_decode_option!(f32);
 impl<'de> DmDecode<'de> for Option<&'de str> {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
         match value {
-            Some(bytes) if !bytes.is_empty() => {
-                <&str as DmDecode>::decode(Some(bytes)).map(Some)
-            }
+            Some(bytes) if !bytes.is_empty() => <&str as DmDecode>::decode(Some(bytes)).map(Some),
             _ => Ok(None),
         }
     }
@@ -518,9 +536,7 @@ impl<'de> DmDecode<'de> for Option<&'de str> {
 impl<'de> DmDecode<'de> for Option<String> {
     fn decode(value: Option<&'de [u8]>) -> crate::error::Result<Self> {
         match value {
-            Some(bytes) if !bytes.is_empty() => {
-                <String as DmDecode>::decode(Some(bytes)).map(Some)
-            }
+            Some(bytes) if !bytes.is_empty() => <String as DmDecode>::decode(Some(bytes)).map(Some),
             _ => Ok(None),
         }
     }
@@ -610,7 +626,12 @@ impl ResultSet {
     }
 
     /// Create a result set with the given data.
-    pub fn with_data(columns: Vec<Column>, rows: Vec<Row>, cursor_id: i16, total_row_count: u64) -> Self {
+    pub fn with_data(
+        columns: Vec<Column>,
+        rows: Vec<Row>,
+        cursor_id: i16,
+        total_row_count: u64,
+    ) -> Self {
         Self {
             columns,
             rows,
@@ -764,9 +785,18 @@ mod tests {
     fn test_result_set_into_iter() {
         let rs = ResultSet::with_data(
             vec![],
-            vec![Row { row_id: 0, values: vec![Some(vec![1, 0, 0, 0])] },
-                 Row { row_id: 1, values: vec![Some(vec![2, 0, 0, 0])] }],
-            0, 2,
+            vec![
+                Row {
+                    row_id: 0,
+                    values: vec![Some(vec![1, 0, 0, 0])],
+                },
+                Row {
+                    row_id: 1,
+                    values: vec![Some(vec![2, 0, 0, 0])],
+                },
+            ],
+            0,
+            2,
         );
         let ids: Vec<i32> = rs.into_iter().map(|r| r.get::<i32>(0).unwrap()).collect();
         assert_eq!(ids, vec![1, 2]);
@@ -829,8 +859,12 @@ mod tests {
         // protocol-level methods via Deref
         let rs = ResultSet::with_data(
             vec![],
-            vec![Row { row_id: 0, values: vec![Some(vec![1, 0, 0, 0]), Some(b"Alice".to_vec())] }],
-            0, 1,
+            vec![Row {
+                row_id: 0,
+                values: vec![Some(vec![1, 0, 0, 0]), Some(b"Alice".to_vec())],
+            }],
+            0,
+            1,
         );
         for row in rs.iter() {
             let id = row.get_i32(0).unwrap();

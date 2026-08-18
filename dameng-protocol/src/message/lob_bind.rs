@@ -199,7 +199,10 @@ mod tests {
         assert_eq!(payload.len(), 31);
         assert!(payload[..20].iter().all(|&b| b == 0));
         assert_eq!(i16::from_le_bytes([payload[20], payload[21]]), 0);
-        assert_eq!(i32::from_le_bytes([payload[22], payload[23], payload[24], payload[25]]), 5);
+        assert_eq!(
+            i32::from_le_bytes([payload[22], payload[23], payload[24], payload[25]]),
+            5
+        );
         assert_eq!(&payload[26..], &[1, 2, 3, 4, 5]);
     }
 
@@ -211,9 +214,15 @@ mod tests {
         assert_eq!(payload.len(), 35);
         assert!(payload[..20].iter().all(|&b| b == 0));
         assert_eq!(i16::from_le_bytes([payload[20], payload[21]]), 2);
-        assert_eq!(i32::from_le_bytes([payload[22], payload[23], payload[24], payload[25]]), 5);
+        assert_eq!(
+            i32::from_le_bytes([payload[22], payload[23], payload[24], payload[25]]),
+            5
+        );
         // NewLobFlag marker: -1
-        assert_eq!(i32::from_le_bytes([payload[26], payload[27], payload[28], payload[29]]), -1);
+        assert_eq!(
+            i32::from_le_bytes([payload[26], payload[27], payload[28], payload[29]]),
+            -1
+        );
         assert_eq!(&payload[30..], &[1, 2, 3, 4, 5]);
     }
 

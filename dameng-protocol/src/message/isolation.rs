@@ -157,7 +157,10 @@ mod tests {
                 level.to_protocol_value()
             );
             // verify handle
-            assert_eq!(u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]), 7);
+            assert_eq!(
+                u32::from_le_bytes([frame[0], frame[1], frame[2], frame[3]]),
+                7
+            );
         }
     }
 

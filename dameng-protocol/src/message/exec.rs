@@ -371,8 +371,10 @@ mod tests {
         // After 25-byte header: sql_len(u16) + 'A'(u16 LE) + 'B'(u16 LE)
         assert_eq!(payload[23], 2); // sql_length low byte
         assert_eq!(payload[24], 0); // sql_length high byte
-        assert_eq!(payload[25], 0x41); assert_eq!(payload[26], 0); // 'A'
-        assert_eq!(payload[27], 0x42); assert_eq!(payload[28], 0); // 'B'
+        assert_eq!(payload[25], 0x41);
+        assert_eq!(payload[26], 0); // 'A'
+        assert_eq!(payload[27], 0x42);
+        assert_eq!(payload[28], 0); // 'B'
     }
 
     #[test]
@@ -398,7 +400,19 @@ mod tests {
         exec.max_rows = 100;
         let payload = exec.encode_payload();
         // max_rows at offset 8-15
-        assert_eq!(i64::from_le_bytes([payload[8], payload[9], payload[10], payload[11], payload[12], payload[13], payload[14], payload[15]]), 100);
+        assert_eq!(
+            i64::from_le_bytes([
+                payload[8],
+                payload[9],
+                payload[10],
+                payload[11],
+                payload[12],
+                payload[13],
+                payload[14],
+                payload[15]
+            ]),
+            100
+        );
     }
 
     #[test]
@@ -407,7 +421,10 @@ mod tests {
         exec.timeout = 30;
         let payload = exec.encode_payload();
         // timeout at offset 17-20
-        assert_eq!(i32::from_le_bytes([payload[17], payload[18], payload[19], payload[20]]), 30);
+        assert_eq!(
+            i32::from_le_bytes([payload[17], payload[18], payload[19], payload[20]]),
+            30
+        );
     }
 
     #[test]

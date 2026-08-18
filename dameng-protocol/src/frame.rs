@@ -97,7 +97,9 @@ impl Frame {
         // Bytes [4..12] of the remaining 44-byte reserved area = absolute offset 24.
         let update_count = if buf.remaining() >= 12 {
             let raw = &buf.chunk()[4..12]; // offset 24-31 in absolute header
-            u64::from_le_bytes([raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7]])
+            u64::from_le_bytes([
+                raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
+            ])
         } else {
             0
         };
@@ -201,10 +203,16 @@ mod tests {
         let encoded = frame.encode();
         let bytes = encoded.freeze();
 
-        assert_eq!(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]), 7);
+        assert_eq!(
+            i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            7
+        );
         assert_eq!(bytes[4], 8);
         assert_eq!(bytes[5], 0);
-        assert_eq!(i32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]), 255);
+        assert_eq!(
+            i32::from_le_bytes([bytes[6], bytes[7], bytes[8], bytes[9]]),
+            255
+        );
         assert_eq!(bytes[18], 0);
     }
 

@@ -130,8 +130,7 @@ impl FetchResponse {
 
         // updateCount at offset 20
         let total_row_count = i64::from_le_bytes([
-            data[20], data[21], data[22], data[23],
-            data[24], data[25], data[26], data[27],
+            data[20], data[21], data[22], data[23], data[24], data[25], data[26], data[27],
         ]);
 
         // rsSizeof at offset 28
@@ -159,9 +158,8 @@ impl FetchResponse {
         // Parse it using the ExecResponse parser.
         // Guard against parsing garbage: if row_data is all zeros or too short,
         // the server returned metadata only (no inline data).
-        let has_real_data = row_data.len() > 16
-            && !row_data.iter().all(|&b| b == 0)
-            && row_data[0] != 0;
+        let has_real_data =
+            row_data.len() > 16 && !row_data.iter().all(|&b| b == 0) && row_data[0] != 0;
 
         if !has_real_data {
             // Server returned a cursor/total count but no inline row data.
@@ -227,15 +225,27 @@ mod tests {
 
         // Verify startRow at offset 20
         let start_row = i64::from_le_bytes([
-            payload[20], payload[21], payload[22], payload[23],
-            payload[24], payload[25], payload[26], payload[27],
+            payload[20],
+            payload[21],
+            payload[22],
+            payload[23],
+            payload[24],
+            payload[25],
+            payload[26],
+            payload[27],
         ]);
         assert_eq!(start_row, 42);
 
         // Verify endRow at offset 28
         let end_row = i64::from_le_bytes([
-            payload[28], payload[29], payload[30], payload[31],
-            payload[32], payload[33], payload[34], payload[35],
+            payload[28],
+            payload[29],
+            payload[30],
+            payload[31],
+            payload[32],
+            payload[33],
+            payload[34],
+            payload[35],
         ]);
         assert_eq!(end_row, i64::MAX);
 
@@ -244,7 +254,8 @@ mod tests {
         assert_eq!(cursor_id, 5);
 
         // Verify prefetchBytes at offset 38
-        let prefetch_bytes = i32::from_le_bytes([payload[38], payload[39], payload[40], payload[41]]);
+        let prefetch_bytes =
+            i32::from_le_bytes([payload[38], payload[39], payload[40], payload[41]]);
         assert_eq!(prefetch_bytes, 8192);
     }
 

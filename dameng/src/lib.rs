@@ -11,12 +11,12 @@ pub mod transaction;
 
 pub use client::Client;
 pub use config::ConnectOptions;
-pub use error::{Error, Result};
 pub use dameng_protocol::Row;
+pub use error::{Error, Result};
 
 // Re-export protocol types needed for parameter binding
-pub use dameng_protocol::message::{BindParam, ParameterDirection};
 pub use dameng_protocol::message::isolation::{IsolationLevel, SetIsolationMessage};
+pub use dameng_protocol::message::{BindParam, ParameterDirection};
 
 // Re-export ToDmValue trait for SQLx-style dynamic binding
 pub use dameng_types::ToDmValue;

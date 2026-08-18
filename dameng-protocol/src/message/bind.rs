@@ -175,24 +175,24 @@ impl BindExec2Message {
         buf.put_u8(if self.has_result_set { 1 } else { 0 });
 
         // Pagination and execution options
-        buf.put_i64_le(self.offset);         // offset
-        buf.put_i64_le(0);                   // cursor_update_row
-        buf.put_i64_le(self.max_rows);       // max_rows
-        buf.put_u8(0);                       // flags
-        buf.put_u8(0);                       // reserved
-        buf.put_u8(0);                       // reserved
-        buf.put_u8(0);                       // reserved
-        buf.put_i32_le(self.query_timeout);  // query_timeout
-        buf.put_i32_le(0);                   // batch_allow_max_errors
-        buf.put_u8(0);                       // innerExec
-        buf.put_u8(0);                       // bind_options
+        buf.put_i64_le(self.offset); // offset
+        buf.put_i64_le(0); // cursor_update_row
+        buf.put_i64_le(self.max_rows); // max_rows
+        buf.put_u8(0); // flags
+        buf.put_u8(0); // reserved
+        buf.put_u8(0); // reserved
+        buf.put_u8(0); // reserved
+        buf.put_i32_le(self.query_timeout); // query_timeout
+        buf.put_i32_le(0); // batch_allow_max_errors
+        buf.put_u8(0); // innerExec
+        buf.put_u8(0); // bind_options
 
         // Parameter descriptors
         for param in &self.params {
             buf.put_u8(param.direction as u8); // ioType
-            buf.put_i32_le(param.type_code);   // colType
-            buf.put_i32_le(param.precision);   // prec
-            buf.put_i32_le(param.scale);       // scale
+            buf.put_i32_le(param.type_code); // colType
+            buf.put_i32_le(param.precision); // prec
+            buf.put_i32_le(param.scale); // scale
         }
 
         // Parameter values
@@ -225,7 +225,7 @@ impl BindExec2Message {
 /// Allocates a new statement handle from the server.
 /// Payload: 1 byte (readBaseColName flag, 1 = include base column names).
 ///
-/// Response: statement ID at offset 20 of the response payload (u32 LE).
+/// Response: statement ID at offset 0 of the response payload (u32 LE).
 #[derive(Debug, Clone)]
 pub struct StatementAllocateMessage {
     /// Whether to include base column names in responses.
@@ -252,12 +252,7 @@ impl StatementAllocateMessage {
         if payload.len() < 4 {
             return Err(crate::error::Error::Incomplete);
         }
-        let stmt_id = u32::from_le_bytes([
-            payload[0],
-            payload[1],
-            payload[2],
-            payload[3],
-        ]);
+        let stmt_id = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
         Ok(stmt_id)
     }
 }
@@ -442,7 +437,10 @@ mod tests {
         let payload = msg.encode_payload();
         // After header(42) + descriptor(13) = 55, null marker should be 0xFFFF
         let null_marker_offset = 42 + 13; // descriptor = 1+4+4+4 = 13
-        assert_eq!(u16::from_le_bytes([payload[null_marker_offset], payload[null_marker_offset + 1]]), 0xFFFF);
+        assert_eq!(
+            u16::from_le_bytes([payload[null_marker_offset], payload[null_marker_offset + 1]]),
+            0xFFFF
+        );
     }
 
     #[test]
@@ -450,9 +448,33 @@ mod tests {
         let msg = BindExec2Message::with_pagination(true, true, 100, 50, vec![]);
         let payload = msg.encode_payload();
         // offset at bytes 4-11
-        assert_eq!(i64::from_le_bytes([payload[4], payload[5], payload[6], payload[7], payload[8], payload[9], payload[10], payload[11]]), 100);
+        assert_eq!(
+            i64::from_le_bytes([
+                payload[4],
+                payload[5],
+                payload[6],
+                payload[7],
+                payload[8],
+                payload[9],
+                payload[10],
+                payload[11]
+            ]),
+            100
+        );
         // max_rows at bytes 20-27
-        assert_eq!(i64::from_le_bytes([payload[20], payload[21], payload[22], payload[23], payload[24], payload[25], payload[26], payload[27]]), 50);
+        assert_eq!(
+            i64::from_le_bytes([
+                payload[20],
+                payload[21],
+                payload[22],
+                payload[23],
+                payload[24],
+                payload[25],
+                payload[26],
+                payload[27]
+            ]),
+            50
+        );
     }
 
     #[test]
@@ -498,16 +520,18 @@ mod tests {
 
     #[test]
     fn test_statement_allocate_parse_response() {
-        let mut data = vec![0u8; 32];
-        // Statement ID at offset 20
+        let mut data = vec![0u8; 4];
         let stmt_id: u32 = 0x12345678;
-        data[20..24].copy_from_slice(&stmt_id.to_le_bytes());
-        assert_eq!(StatementAllocateMessage::parse_response(&data).unwrap(), stmt_id);
+        data.copy_from_slice(&stmt_id.to_le_bytes());
+        assert_eq!(
+            StatementAllocateMessage::parse_response(&data).unwrap(),
+            stmt_id
+        );
     }
 
     #[test]
     fn test_statement_allocate_parse_response_incomplete() {
-        let data = vec![0u8; 16];
+        let data = vec![0u8; 3];
         let result = StatementAllocateMessage::parse_response(&data);
         assert!(matches!(result, Err(crate::error::Error::Incomplete)));
     }
@@ -531,7 +555,10 @@ mod tests {
         let msg = StatementFreeMessage::new(0xDEADBEEF);
         let payload = msg.encode_payload();
         assert_eq!(payload.len(), 4);
-        assert_eq!(u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]), 0xDEADBEEF);
+        assert_eq!(
+            u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]),
+            0xDEADBEEF
+        );
     }
 
     #[test]

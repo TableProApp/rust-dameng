@@ -51,8 +51,7 @@ impl AckResponse {
         let _reserved = u32::from_le_bytes([data[4], data[5], data[6], data[7]]);
         let rows_affected = if data.len() >= 16 {
             i64::from_le_bytes([
-                data[8], data[9], data[10], data[11],
-                data[12], data[13], data[14], data[15],
+                data[8], data[9], data[10], data[11], data[12], data[13], data[14], data[15],
             ])
         } else {
             0
@@ -108,7 +107,7 @@ mod tests {
     fn test_ack_from_bytes_success() {
         let mut data = [0u8; 64];
         data[0] = 1; // status = success
-        // Message "Success" at offset 56
+                     // Message "Success" at offset 56
         data[52] = 7; // msg_len
         let msg = b"Success";
         data[56..56 + msg.len()].copy_from_slice(msg);

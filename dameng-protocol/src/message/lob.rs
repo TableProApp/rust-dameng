@@ -376,15 +376,17 @@ impl LobGetLenResponse {
         // Parse newBlobId (DDWORD = i64 LE) if available
         let new_blob_id = if data.len() >= 12 {
             let blob_id = i64::from_le_bytes([
-                data[4], data[5], data[6], data[7],
-                data[8], data[9], data[10], data[11],
+                data[4], data[5], data[6], data[7], data[8], data[9], data[10], data[11],
             ]);
             Some(blob_id)
         } else {
             None
         };
 
-        Ok(Self { length, new_blob_id })
+        Ok(Self {
+            length,
+            new_blob_id,
+        })
     }
 }
 
@@ -396,7 +398,7 @@ mod tests {
         // Build a minimal NBLOB_HEAD with in_row=0x02
         let mut raw = vec![0u8; 43];
         raw[0] = 0x02; // in_row = out-of-row
-        // blob_id at offset 1
+                       // blob_id at offset 1
         raw[1..9].copy_from_slice(&42i64.to_le_bytes());
         // group_id at offset 13
         raw[13..15].copy_from_slice(&1i16.to_le_bytes());

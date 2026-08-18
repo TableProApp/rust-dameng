@@ -171,7 +171,8 @@ impl LoginResponse {
                 ]) as usize;
                 let ip_start = ip_offset + 4;
                 if ip_len > 0 && data.len() > ip_start + ip_len {
-                    client_ip = String::from_utf8_lossy(&data[ip_start..ip_start + ip_len]).to_string();
+                    client_ip =
+                        String::from_utf8_lossy(&data[ip_start..ip_start + ip_len]).to_string();
                 }
 
                 // Login datetime
@@ -185,7 +186,8 @@ impl LoginResponse {
                     ]) as usize;
                     let dt_start = dt_offset + 4;
                     if dt_len > 0 && data.len() > dt_start + dt_len {
-                        login_datetime = String::from_utf8_lossy(&data[dt_start..dt_start + dt_len]).to_string();
+                        login_datetime =
+                            String::from_utf8_lossy(&data[dt_start..dt_start + dt_len]).to_string();
                     }
 
                     // DB name
@@ -199,7 +201,8 @@ impl LoginResponse {
                         ]) as usize;
                         let db_start = db_offset + 4;
                         if db_len > 0 && data.len() > db_start + db_len {
-                            db_name = String::from_utf8_lossy(&data[db_start..db_start + db_len]).to_string();
+                            db_name = String::from_utf8_lossy(&data[db_start..db_start + db_len])
+                                .to_string();
                         }
                     }
                 }
@@ -258,7 +261,7 @@ mod tests {
         data[3] = 0x1F; // session_id = 0x1F40
         data[0x0A] = 0x01; // UTF-8
         data[0x0E] = 0x01; // server_status
-        // Server name at 0x10: len + string
+                           // Server name at 0x10: len + string
         let sn = b"DMSERVER";
         data[0x10] = sn.len() as u8;
         data[0x14..0x14 + sn.len()].copy_from_slice(sn);
@@ -286,11 +289,17 @@ mod tests {
         let challenge = [0xBBu8; 48];
         let login = LoginMessage::new("SYSDBA", "SYSDBA", "localhost");
         let payload = login.encode_payload(&challenge);
-        assert_eq!(i32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]), 6);
+        assert_eq!(
+            i32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]),
+            6
+        );
         // Encrypted username
         assert_eq!(payload[4], b'S' ^ 0xBB);
         // Password starts at offset 10
-        assert_eq!(i32::from_le_bytes([payload[10], payload[11], payload[12], payload[13]]), 6);
+        assert_eq!(
+            i32::from_le_bytes([payload[10], payload[11], payload[12], payload[13]]),
+            6
+        );
         // Separator at offset 20
         assert_eq!(&payload[20..24], &[0u8; 4]);
     }

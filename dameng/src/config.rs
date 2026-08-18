@@ -134,7 +134,9 @@ impl ConnectOptions {
         } else if let Some(rest) = dsn.strip_prefix("dm") {
             (rest, "dm")
         } else {
-            return Err(Error::ConfigError("invalid DSN: missing 'dm://' scheme".to_string()));
+            return Err(Error::ConfigError(
+                "invalid DSN: missing 'dm://' scheme".to_string(),
+            ));
         };
 
         // Parse query parameters
@@ -287,8 +289,7 @@ mod tests {
 
     #[test]
     fn test_dsn_basic() {
-        let opts =
-            ConnectOptions::from_dsn("dm://SYSDBA:SYSDBA@127.0.0.1:5236/").unwrap();
+        let opts = ConnectOptions::from_dsn("dm://SYSDBA:SYSDBA@127.0.0.1:5236/").unwrap();
         assert_eq!(opts.host, "127.0.0.1");
         assert_eq!(opts.port, 5236);
         assert_eq!(opts.username, "SYSDBA");
@@ -297,9 +298,10 @@ mod tests {
 
     #[test]
     fn test_dsn_with_params() {
-        let opts =
-            ConnectOptions::from_dsn("dm://SYSDBA:SYSDBA@127.0.0.1:5236/?charset=utf8&ssl=true&auto_commit=false")
-                .unwrap();
+        let opts = ConnectOptions::from_dsn(
+            "dm://SYSDBA:SYSDBA@127.0.0.1:5236/?charset=utf8&ssl=true&auto_commit=false",
+        )
+        .unwrap();
         assert_eq!(opts.charset, Some("utf8".to_string()));
         assert!(opts.ssl);
         assert!(!opts.auto_commit);
@@ -323,9 +325,10 @@ mod tests {
 
     #[test]
     fn test_dsn_isolation_level() {
-        let opts =
-            ConnectOptions::from_dsn("dm://SYSDBA:SYSDBA@127.0.0.1:5236/?isolation_level=serializable")
-                .unwrap();
+        let opts = ConnectOptions::from_dsn(
+            "dm://SYSDBA:SYSDBA@127.0.0.1:5236/?isolation_level=serializable",
+        )
+        .unwrap();
         assert_eq!(opts.isolation_level, IsolationLevel::Serializable);
     }
 
