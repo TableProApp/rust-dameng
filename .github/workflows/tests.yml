@@ -1,0 +1,24 @@
+name: Tests
+
+on:
+  push:
+    branches: [tablepro]
+  pull_request:
+    branches: [tablepro]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Matches the toolchain TablePro builds the shipped staticlib with, in
+      # Native/DamengBridge/rust-toolchain.toml.
+      - name: Install Rust
+        run: rustup toolchain install 1.91.1 --profile minimal --component rustfmt
+
+      # tokio-dameng and dameng-macros are upstream crates TablePro does not link, and
+      # tokio-dameng's test suite does not compile on upstream c5120eb0 either. Testing
+      # the whole workspace would fail on code this fork never touches.
+      - name: Test the crates TablePro links
+        run: cargo +1.91.1 test -p dameng -p dameng-protocol -p dameng-types
