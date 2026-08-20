@@ -11,8 +11,19 @@
 //! 14      4     AffectedRows (i32 LE) - rows affected (for DML responses)
 //! 18      1     CompressFlag (u8)
 //! 19      1     Checksum (u8) - XOR of bytes 0-18
-//! 20      44    Reserved (zeros)
+//! 20      44    Reserved for the message type (zeros on client messages)
 //! 64      var   Payload body
+//! ```
+//!
+//! The server reuses the reserved area, and each response type spells it differently.
+//! The fields below overlap on purpose, so read the one that belongs to the message:
+//! ```text
+//! Offset  Size  Response      Field
+//! 20      8     FETCH         fetch_total (i64 LE)
+//! 22      2     EXEC/OPE ACK  column_count (u16 LE)
+//! 24      8     EXEC/OPE ACK  update_count (i64 LE)
+//! 28      4     FETCH         batch_row_count (i32 LE)
+//! 28      4     STARTUP       server_encoding (i32 LE)
 //! ```
 
 use bytes::{Buf, BufMut, BytesMut};
@@ -21,6 +32,10 @@ use crate::error::{Error, Result};
 
 /// The size of the frame header in bytes.
 pub const FRAME_HEADER_SIZE: usize = 64;
+
+/// What the server writes in a row total it cannot state yet, because rows are still
+/// queued behind the cursor. A total that is not this value is the final one.
+pub const ROW_TOTAL_UNKNOWN: i64 = i64::MAX;
 
 /// DM protocol frame header (64 bytes).
 #[derive(Debug, Clone, PartialEq)]
@@ -38,9 +53,17 @@ pub struct Frame {
     pub affected_rows: i32,
     /// Compression flag (0=none, 1=snappy, 2=zlib).
     pub compress_flag: u8,
-    /// Update count for DML operations, stored in the reserved area
-    /// at header offset 24 (int64 LE). Always 0 for non-DML.
+    /// Update count at header offset 24 (int64 LE): the affected count of a DML
+    /// statement, and the row total of a result set. It is
+    /// [`ROW_TOTAL_UNKNOWN`] while the server still holds rows for the cursor.
     pub update_count: u64,
+    /// Number of columns in a statement response, header offset 22 (uint16 LE).
+    pub column_count: u16,
+    /// Row total a FETCH reply reports, header offset 20 (int64 LE).
+    /// [`ROW_TOTAL_UNKNOWN`] until the batch that drains the cursor.
+    pub fetch_total: i64,
+    /// Number of rows a FETCH reply carries in its payload, header offset 28 (int32 LE).
+    pub batch_row_count: i32,
     /// Server encoding from header offset 28 (int32 LE).
     /// Used in STARTUP_RESPONSE. 0=GB18030, 1=UTF-8, 2=EUC-KR.
     pub server_encoding: u8,
@@ -57,6 +80,9 @@ impl Frame {
             affected_rows: 0,
             compress_flag: 0,
             update_count: 0,
+            column_count: 0,
+            fetch_total: 0,
+            batch_row_count: 0,
             server_encoding: 0,
         }
     }
@@ -91,25 +117,40 @@ impl Frame {
             return Err(Error::ChecksumMismatch);
         }
 
-        // Parse update_count from the reserved area at header offset 24 (int64 LE).
-        // Need to read from the raw buffer before advancing. buf currently has
-        // cursor at byte 20 (after consuming 20 bytes).
-        // Bytes [4..12] of the remaining 44-byte reserved area = absolute offset 24.
-        let update_count = if buf.remaining() >= 12 {
-            let raw = &buf.chunk()[4..12]; // offset 24-31 in absolute header
-            u64::from_le_bytes([
-                raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
-            ])
+        // The cursor sits at byte 20 now, so the reserved area starts at chunk()[0]
+        // and every field below is read before the buffer advances past it.
+        let reserved = if buf.remaining() >= 12 {
+            let raw = &buf.chunk()[..12];
+            let mut bytes = [0u8; 12];
+            bytes.copy_from_slice(raw);
+            bytes
         } else {
-            0
+            [0u8; 12]
         };
-        // Server encoding at header offset 28 (int32 LE)
-        let server_encoding = if buf.remaining() >= 12 {
-            let raw = &buf.chunk()[8..12]; // offset 28-31 in absolute header
-            u8::from_le_bytes([raw[0]])
-        } else {
-            0
-        };
+        let fetch_total = i64::from_le_bytes([
+            reserved[0],
+            reserved[1],
+            reserved[2],
+            reserved[3],
+            reserved[4],
+            reserved[5],
+            reserved[6],
+            reserved[7],
+        ]);
+        let column_count = u16::from_le_bytes([reserved[2], reserved[3]]);
+        let update_count = u64::from_le_bytes([
+            reserved[4],
+            reserved[5],
+            reserved[6],
+            reserved[7],
+            reserved[8],
+            reserved[9],
+            reserved[10],
+            reserved[11],
+        ]);
+        let batch_row_count =
+            i32::from_le_bytes([reserved[8], reserved[9], reserved[10], reserved[11]]);
+        let server_encoding = reserved[8];
 
         // Skip remaining 44 bytes of reserved
         buf.advance(44);
@@ -122,6 +163,9 @@ impl Frame {
             affected_rows,
             compress_flag,
             update_count,
+            column_count,
+            fetch_total,
+            batch_row_count,
             server_encoding,
         })
     }
@@ -223,5 +267,32 @@ mod tests {
         assert_eq!(frame.msg_type, 13);
         assert_eq!(frame.handle, 3);
         assert_eq!(frame.body_len, 100);
+    }
+
+    /// The reserved area carries several overlapping counts. Only the checksum over
+    /// bytes 0-18 is fixed, so a reply can be forged by patching the tail.
+    #[test]
+    fn test_frame_parse_reserved_counts() {
+        let mut encoded = Frame::new(187, 0, 64).encode();
+        encoded[20..28].copy_from_slice(&20_000i64.to_le_bytes());
+        encoded[28..32].copy_from_slice(&662i32.to_le_bytes());
+        let frame = Frame::parse(&mut encoded).unwrap();
+        assert_eq!(frame.fetch_total, 20_000);
+        assert_eq!(frame.batch_row_count, 662);
+
+        let mut encoded = Frame::new(187, 0, 64).encode();
+        encoded[22..24].copy_from_slice(&5u16.to_le_bytes());
+        encoded[24..32].copy_from_slice(&2i64.to_le_bytes());
+        let frame = Frame::parse(&mut encoded).unwrap();
+        assert_eq!(frame.column_count, 5);
+        assert_eq!(frame.update_count, 2);
+    }
+
+    #[test]
+    fn test_frame_parse_unknown_row_total() {
+        let mut encoded = Frame::new(187, 0, 0).encode();
+        encoded[24..32].copy_from_slice(&ROW_TOTAL_UNKNOWN.to_le_bytes());
+        let frame = Frame::parse(&mut encoded).unwrap();
+        assert_eq!(frame.update_count, ROW_TOTAL_UNKNOWN as u64);
     }
 }

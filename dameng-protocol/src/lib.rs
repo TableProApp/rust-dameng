@@ -8,6 +8,6 @@ pub mod frame;
 pub mod message;
 
 pub use error::{Error, Result};
-pub use frame::Frame;
+pub use frame::{Frame, ROW_TOTAL_UNKNOWN};
 pub use message::explain::ExplainResponse;
 pub use message::response::{Column, ExecResponse, Row};

@@ -6,7 +6,7 @@ use std::net::TcpStream;
 use std::sync::Arc;
 
 use bytes::{BufMut, BytesMut};
-use dameng_protocol::frame::{Frame, FRAME_HEADER_SIZE};
+use dameng_protocol::frame::{Frame, FRAME_HEADER_SIZE, ROW_TOTAL_UNKNOWN};
 use dameng_protocol::message::bind::BindParam;
 use dameng_protocol::message::isolation::{IsolationLevel, SetIsolationMessage};
 use dameng_protocol::message::*;
@@ -825,54 +825,6 @@ impl Client {
             .collect()
     }
 
-    /// Fetch all rows from a BIND_EXEC2 result using FETCH protocol.
-    ///
-    /// When BIND_EXEC2 returns col_count=0 but total_row_count > 0,
-    /// the data must be retrieved via FETCH messages.
-    #[allow(unused)]
-    fn fetch_from_bind_exec(&mut self, stmt_id: u32, total_rows: u64) -> Result<ResultSet> {
-        let mut all_columns = Vec::new();
-        let mut all_rows = Vec::new();
-
-        let mut start_row: i64 = 0;
-        let prefetch = 65536i32;
-
-        loop {
-            let fetch = FetchMessage::new(start_row, 0, prefetch);
-            let fetch_payload = fetch.encode_payload();
-            // Use connection handle (self.handle), not stmt_id, matching fetch_more()
-            self.write_all(&build_message(FETCH, self.handle, &fetch_payload))?;
-
-            let (frame, payload) = self.read_message()?;
-            if frame.response_code < 0 {
-                let msg = String::from_utf8_lossy(&payload);
-                return Err(Error::QueryFailed(format!(
-                    "fetch failed: code={} type={} payload={}",
-                    frame.response_code, frame.msg_type, msg
-                )));
-            }
-
-            let fetch_resp = FetchResponse::from_bytes(&payload, self.server_encoding)
-                .map_err(|e| Error::Protocol(e))?;
-
-            // Collect columns from first fetch response
-            if all_columns.is_empty() && !fetch_resp.columns.is_empty() {
-                all_columns = fetch_resp.columns;
-            }
-
-            let fetched_rows = fetch_resp.rows;
-            let fetched_count = fetched_rows.len();
-            all_rows.extend(fetched_rows);
-            start_row += fetched_count as i64;
-
-            if start_row >= fetch_resp.total_row_count as i64 || fetched_count == 0 {
-                break;
-            }
-        }
-
-        Ok(ResultSet::with_data(all_columns, all_rows, 0, total_rows))
-    }
-
     /// Set transaction isolation level.
     ///
     /// Sends a SET_ISOLATION (type 52) message to the DM server.
@@ -1080,11 +1032,18 @@ impl Client {
             // OPE(91) SELECT: ACK with inline row data in payload.
             // For SELECT queries this is the complete response — no trailing messages.
             // For DML queries there may be trailing messages, handled after parsing.
-            let resp = ExecResponse::from_bytes(&payload, self.server_encoding)?;
-            // OPE offset 12 describes result metadata, not the number of rows. It
-            // remains nonzero for an empty SELECT, which would otherwise trigger
-            // an invalid FETCH against a response that is already complete.
-            let mut total = resp.rows.len() as u64;
+            let resp = ExecResponse::from_bytes_with_col_count(
+                &payload,
+                frame.column_count,
+                self.server_encoding,
+            )?;
+            // The header's update_count is the row total, and ROW_TOTAL_UNKNOWN while
+            // rows are still queued behind the cursor. The payload has no row count to
+            // read: what sits at offset 12 belongs to the first column descriptor.
+            if frame.update_count == ResultSet::UNKNOWN_TOTAL {
+                return Ok(ResultSet::with_pending_rows(resp.columns, resp.rows, 0));
+            }
+            let mut total = frame.update_count;
             if !has_result_set {
                 // DML with trailing messages (rare path)
                 let trailing = self.consume_remaining_ope_messages()?;
@@ -1241,7 +1200,11 @@ impl Client {
         self.do_prepare_execute(&[], sql, true)
     }
 
-    /// Fetch more rows from a result set using the FETCH protocol (msg_type=7).
+    /// Fetch the next batch of rows into an incomplete result set (msg_type=7).
+    ///
+    /// DM 8.1.3.62 reads neither `start_row` nor `prefetch_bytes`: it streams the next
+    /// batch from wherever its own cursor stands, sized to its own budget. Both stay in
+    /// the signature because the request carries them and a later server may honour them.
     ///
     /// # Arguments
     /// * `result_set` - The ResultSet from the initial query (will be mutated)
@@ -1249,15 +1212,15 @@ impl Client {
     /// * `prefetch_bytes` - Maximum bytes to fetch (clamped to [32, 65536])
     ///
     /// # Returns
-    /// The total row count in the result set (from the server).
+    /// The row total once the server states it, [`ResultSet::UNKNOWN_TOTAL`] until then.
     ///
     /// # Example
     /// ```ignore
     /// let mut rs = client.query("SELECT * FROM large_table")?;
-    /// let batch_size = 100;
-    /// while rs.rows.len() < rs.total_row_count as usize {
-    ///     let fetched = client.fetch_more(&mut rs, rs.rows.len(), 8192)?;
-    ///     // Process new rows from rs.rows[previous_len..]
+    /// while !rs.complete {
+    ///     let previous = rs.rows.len();
+    ///     client.fetch_more(&mut rs, previous, 65_536)?;
+    ///     // Process new rows from rs.rows[previous..]
     /// }
     /// ```
     pub fn fetch_more(
@@ -1284,20 +1247,9 @@ impl Client {
             )));
         }
 
-        // Parse FETCH response
-        let fetch_resp = FetchResponse::from_bytes(&payload, self.server_encoding)
-            .map_err(|e| Error::Protocol(e))?;
-
-        // Append new rows to the result set
-        result_set.rows.extend(fetch_resp.rows);
-
-        // Update total row count from server response
-        result_set.total_row_count = fetch_resp.total_row_count as u64;
-
-        // Merge columns if fetch response includes column metadata
-        if result_set.columns.is_empty() && !fetch_resp.columns.is_empty() {
-            result_set.columns = fetch_resp.columns;
-        }
+        let batch =
+            FetchResponse::from_frame(&frame, &payload, &result_set.columns, self.server_encoding);
+        append_fetch_batch(result_set, batch);
 
         Ok(result_set.total_row_count)
     }
@@ -1629,6 +1581,25 @@ impl Drop for Client {
     }
 }
 
+/// Append a FETCH batch and work out whether the result set is now whole.
+///
+/// The server states the row total on the batch that empties the cursor, and answers a
+/// fetch past the end with an empty body. Either one ends the result set, and until one
+/// of them arrives the total stays [`ResultSet::UNKNOWN_TOTAL`].
+fn append_fetch_batch(result_set: &mut ResultSet, batch: FetchResponse) {
+    let stated_total = batch.total_row_count != ROW_TOTAL_UNKNOWN;
+    let drained = batch.rows.is_empty();
+    result_set.rows.extend(batch.rows);
+    if stated_total {
+        result_set.total_row_count = batch.total_row_count as u64;
+    }
+    result_set.complete =
+        drained || (stated_total && result_set.rows.len() as u64 >= result_set.total_row_count);
+    if result_set.complete && result_set.total_row_count == ResultSet::UNKNOWN_TOTAL {
+        result_set.total_row_count = result_set.rows.len() as u64;
+    }
+}
+
 /// Build a complete message (frame + payload).
 pub fn build_message(msg_type: u8, handle: u32, payload: &[u8]) -> Vec<u8> {
     let frame = Frame::new(msg_type, handle, payload.len() as i32);
@@ -1669,6 +1640,66 @@ mod tests {
     fn test_state_transitions() {
         let client = Client::new("test", 5236);
         assert_eq!(client.state, State::Closed);
+    }
+
+    fn row(id: i32) -> Row {
+        Row {
+            row_id: id as u16,
+            values: vec![Some(id.to_le_bytes().to_vec())],
+        }
+    }
+
+    fn batch(rows: Vec<Row>, total_row_count: i64) -> FetchResponse {
+        FetchResponse {
+            total_row_count,
+            rows,
+        }
+    }
+
+    #[test]
+    fn a_batch_that_states_no_total_leaves_the_result_incomplete() {
+        let mut result = ResultSet::with_pending_rows(Vec::new(), vec![row(1)], 0);
+
+        append_fetch_batch(&mut result, batch(vec![row(2)], ROW_TOTAL_UNKNOWN));
+
+        assert_eq!(result.rows.len(), 2);
+        assert!(!result.complete);
+        assert_eq!(result.total_row_count, ResultSet::UNKNOWN_TOTAL);
+    }
+
+    #[test]
+    fn the_batch_that_states_the_total_completes_the_result() {
+        let mut result = ResultSet::with_pending_rows(Vec::new(), vec![row(1)], 0);
+
+        append_fetch_batch(&mut result, batch(vec![row(2), row(3)], 3));
+
+        assert_eq!(result.rows.len(), 3);
+        assert!(result.complete);
+        assert_eq!(result.total_row_count, 3);
+    }
+
+    /// A fetch past the end answers with an empty body, which ends the result set even
+    /// though no total was ever stated.
+    #[test]
+    fn an_empty_batch_completes_the_result_at_the_rows_already_held() {
+        let mut result = ResultSet::with_pending_rows(Vec::new(), vec![row(1), row(2)], 0);
+
+        append_fetch_batch(&mut result, batch(Vec::new(), ROW_TOTAL_UNKNOWN));
+
+        assert_eq!(result.rows.len(), 2);
+        assert!(result.complete);
+        assert_eq!(result.total_row_count, 2);
+    }
+
+    /// A total that arrives while rows are still missing is not a reason to stop.
+    #[test]
+    fn a_total_beyond_the_rows_held_keeps_the_result_incomplete() {
+        let mut result = ResultSet::with_pending_rows(Vec::new(), vec![row(1)], 0);
+
+        append_fetch_batch(&mut result, batch(vec![row(2)], 10));
+
+        assert_eq!(result.total_row_count, 10);
+        assert!(!result.complete);
     }
 
     #[test]

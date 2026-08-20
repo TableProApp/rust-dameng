@@ -14,21 +14,27 @@
 //! 38      4     prefetchBytes (i32 LE) — max bytes to fetch, clamped [32, 65536]
 //! ```
 //!
-//! Response wire format:
+//! DM 8.1.3.62 reads none of the three: it streams the next batch from wherever its
+//! cursor stands, sized to its own budget, whatever the request asked for.
+//!
+//! The reply's payload is bare inline row data from byte 0, in the same format the
+//! EXEC/OPE payload uses after its column descriptors. It carries no header and no
+//! column metadata, so the columns of the statement that opened the cursor are what
+//! the rows are parsed against. The counts travel in the frame header instead:
 //! ```text
 //! Offset  Size  Field
-//! 0       20    Reserved
-//! 20      8     updateCount (i64 LE) — total row count in result set
-//! 28      4     rsSizeof    (i32 LE) — byte size of row data
-//! 32      N     row data (same format as EXEC_RESPONSE inline rows)
+//! 20      8     fetch_total     (i64 LE) — rows in the whole result set,
+//!                                          ROW_TOTAL_UNKNOWN until the last batch
+//! 28      4     batch_row_count (i32 LE) — rows in this reply
 //! ```
+//! A reply with an empty body means the cursor is drained.
 
 use bytes::{BufMut, BytesMut};
 
-use crate::error::Result;
+use crate::frame::Frame;
 use dameng_types::encoding::ServerEncoding;
 
-use super::response::{Column, ExecResponse, Row};
+use super::response::{parse_inline_rows, Column, Row};
 
 /// Default prefetch byte budget for FETCH requests.
 pub const DEFAULT_PREFETCH_BYTES: i32 = 8192;
@@ -107,85 +113,27 @@ impl FetchMessage {
 /// Response from a FETCH request (msg_type=7).
 #[derive(Debug, Clone)]
 pub struct FetchResponse {
-    /// Total number of rows in the entire result set.
+    /// Rows in the whole result set, or [`crate::frame::ROW_TOTAL_UNKNOWN`] while the
+    /// server still holds rows for the cursor.
     pub total_row_count: i64,
-    /// Column metadata (may be empty if already known from initial query).
-    pub columns: Vec<Column>,
-    /// Row data fetched in this batch.
+    /// Rows this batch carried.
     pub rows: Vec<Row>,
 }
 
 impl FetchResponse {
-    /// Parse a FETCH response from raw payload bytes.
+    /// Parse a FETCH reply: the payload is bare inline rows, the counts are in `frame`.
     ///
-    /// Response format:
-    /// - Offset 0-19: reserved
-    /// - Offset 20-27: updateCount (i64 LE) — total row count
-    /// - Offset 28-31: rsSizeof (i32 LE) — byte size of row data
-    /// - Offset 32+: row data (same format as EXEC_RESPONSE inline rows)
-    pub fn from_bytes(data: &[u8], server_encoding: ServerEncoding) -> Result<Self> {
-        if data.len() < 32 {
-            return Err(crate::error::Error::Incomplete);
-        }
-
-        // updateCount at offset 20
-        let total_row_count = i64::from_le_bytes([
-            data[20], data[21], data[22], data[23], data[24], data[25], data[26], data[27],
-        ]);
-
-        // rsSizeof at offset 28
-        let rs_sizeof = if data.len() >= 32 {
-            i32::from_le_bytes([data[28], data[29], data[30], data[31]]) as usize
-        } else {
-            0
-        };
-
-        // Row data starts at offset 32
-        let row_data_start = 32;
-        let row_data_end = (row_data_start + rs_sizeof).min(data.len());
-
-        if row_data_start >= data.len() || rs_sizeof == 0 {
-            return Ok(FetchResponse {
-                total_row_count,
-                columns: vec![],
-                rows: vec![],
-            });
-        }
-
-        let row_data = &data[row_data_start..row_data_end];
-
-        // The row data follows the same inline format as EXEC_RESPONSE.
-        // Parse it using the ExecResponse parser.
-        // Guard against parsing garbage: if row_data is all zeros or too short,
-        // the server returned metadata only (no inline data).
-        let has_real_data =
-            row_data.len() > 16 && !row_data.iter().all(|&b| b == 0) && row_data[0] != 0;
-
-        if !has_real_data {
-            // Server returned a cursor/total count but no inline row data.
-            // This happens when the cursor_id is invalid or the result is empty.
-            return Ok(FetchResponse {
-                total_row_count,
-                columns: vec![],
-                rows: vec![],
-            });
-        }
-
-        match ExecResponse::from_bytes(row_data, server_encoding) {
-            Ok(resp) => Ok(FetchResponse {
-                total_row_count,
-                columns: resp.columns,
-                rows: resp.rows,
-            }),
-            Err(_) => {
-                // If we can't parse the row data as EXEC_RESPONSE format,
-                // return what we have with empty rows.
-                Ok(FetchResponse {
-                    total_row_count,
-                    columns: vec![],
-                    rows: vec![],
-                })
-            }
+    /// `columns` describes the result set the cursor belongs to. The reply repeats no
+    /// metadata, so nothing else can say how wide a row is.
+    pub fn from_frame(
+        frame: &Frame,
+        data: &[u8],
+        columns: &[Column],
+        server_encoding: ServerEncoding,
+    ) -> Self {
+        Self {
+            total_row_count: frame.fetch_total,
+            rows: parse_inline_rows(data, 0, columns, server_encoding),
         }
     }
 
@@ -285,19 +233,66 @@ mod tests {
         assert_eq!(fetch.prefetch_bytes, DEFAULT_PREFETCH_BYTES);
     }
 
-    #[test]
-    fn test_fetch_response_incomplete() {
-        let data = [0u8; 10];
-        let result = FetchResponse::from_bytes(&data, ServerEncoding::Utf8);
-        assert!(result.is_err());
+    fn varchar_column() -> Column {
+        Column {
+            name: "NAME".to_string(),
+            type_code: 3,
+            type_name: "VARCHAR".to_string(),
+            precision: 100,
+            scale: 0,
+            nullable: true,
+            display_size: 0,
+            table_name: "CUSTOMER".to_string(),
+            schema_name: "APP".to_string(),
+            lob_tab_id: 0,
+            lob_col_id: 0,
+        }
     }
 
+    /// A drained cursor answers with an empty body. That is the end of the result set,
+    /// not a truncated message.
     #[test]
-    fn test_fetch_response_empty_data() {
-        let data = vec![0u8; 42];
-        let resp = FetchResponse::from_bytes(&data, ServerEncoding::Utf8).unwrap();
-        assert_eq!(resp.total_row_count, 0);
+    fn test_fetch_response_empty_body_ends_the_cursor() {
+        let mut frame = Frame::new(7, 0, 0);
+        frame.fetch_total = 2;
+        let resp =
+            FetchResponse::from_frame(&frame, &[], &[varchar_column()], ServerEncoding::Utf8);
+        assert_eq!(resp.total_row_count, 2);
         assert!(resp.rows.is_empty());
+        assert!(!resp.has_more(2));
+    }
+
+    /// Captured from DM 8.1.3.62: the payload is rows from byte 0, no header in front.
+    #[test]
+    fn test_fetch_response_parses_bare_rows() {
+        let data: Vec<u8> = vec![
+            0x13, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x05, 0x00,
+            0x41, 0x6c, 0x69, 0x63, 0x65, // "Alice"
+            0x11, 0x00, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x03, 0x00,
+            0x42, 0x6f, 0x62, // "Bob"
+        ];
+        let mut frame = Frame::new(7, 0, data.len() as i32);
+        frame.fetch_total = 2;
+        frame.batch_row_count = 2;
+
+        let resp =
+            FetchResponse::from_frame(&frame, &data, &[varchar_column()], ServerEncoding::Utf8);
+
+        assert_eq!(resp.rows.len(), frame.batch_row_count as usize);
+        assert_eq!(resp.total_row_count, 2);
+        assert_eq!(resp.rows[0].get_str(0).unwrap(), "Alice");
+        assert_eq!(resp.rows[1].get_str(0).unwrap(), "Bob");
+    }
+
+    /// Every batch before the last one leaves the total unknown.
+    #[test]
+    fn test_fetch_response_unknown_total() {
+        let mut frame = Frame::new(7, 0, 0);
+        frame.fetch_total = crate::frame::ROW_TOTAL_UNKNOWN;
+        let resp =
+            FetchResponse::from_frame(&frame, &[], &[varchar_column()], ServerEncoding::Utf8);
+        assert_eq!(resp.total_row_count, crate::frame::ROW_TOTAL_UNKNOWN);
+        assert!(resp.has_more(662));
     }
 
     #[test]
@@ -313,7 +308,6 @@ mod tests {
     fn test_has_more() {
         let resp = FetchResponse {
             total_row_count: 1000,
-            columns: vec![],
             rows: vec![],
         };
         assert!(resp.has_more(0));

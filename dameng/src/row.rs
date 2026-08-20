@@ -18,8 +18,12 @@ pub struct ResultSet {
     pub rows: Vec<Row>,
     /// Result set cursor ID (from the initial query).
     pub cursor_id: i16,
-    /// Total row count in the result set (from server).
+    /// Total row count in the result set (from server), or
+    /// [`ResultSet::UNKNOWN_TOTAL`] while the server still holds rows for the cursor.
     pub total_row_count: u64,
+    /// Whether `rows` is the whole result. While it is false the server has more rows
+    /// queued, and only [`crate::Client::fetch_more`] can reach them.
+    pub complete: bool,
 }
 
 /// A single row with column metadata, produced by iterating a `ResultSet`.
@@ -615,6 +619,9 @@ impl<'a> QueryRowRef<'a> {
 // ─── ResultSet methods ──────────────────────────────────────────────────────
 
 impl ResultSet {
+    /// `total_row_count` while the server has not stated the total yet.
+    pub const UNKNOWN_TOTAL: u64 = dameng_protocol::ROW_TOTAL_UNKNOWN as u64;
+
     /// Create a new empty result set.
     pub fn new() -> Self {
         Self {
@@ -622,10 +629,11 @@ impl ResultSet {
             rows: vec![],
             cursor_id: 0,
             total_row_count: 0,
+            complete: true,
         }
     }
 
-    /// Create a result set with the given data.
+    /// Create a result set holding every row of the result.
     pub fn with_data(
         columns: Vec<Column>,
         rows: Vec<Row>,
@@ -637,6 +645,19 @@ impl ResultSet {
             rows,
             cursor_id,
             total_row_count,
+            complete: true,
+        }
+    }
+
+    /// Create a result set the server has more rows for. `total_row_count` is
+    /// [`ResultSet::UNKNOWN_TOTAL`] until a FETCH reply states it.
+    pub fn with_pending_rows(columns: Vec<Column>, rows: Vec<Row>, cursor_id: i16) -> Self {
+        Self {
+            columns,
+            rows,
+            cursor_id,
+            total_row_count: Self::UNKNOWN_TOTAL,
+            complete: false,
         }
     }
 
@@ -695,7 +716,7 @@ impl ResultSet {
 
     /// Check if there are more rows to fetch.
     pub fn has_more(&self) -> bool {
-        self.rows.len() < self.total_row_count as usize
+        !self.complete
     }
 
     /// Get the next fetch start position.
@@ -729,6 +750,23 @@ mod tests {
         let rs = ResultSet::new();
         assert!(rs.is_empty());
         assert_eq!(rs.len(), 0);
+        assert!(rs.complete);
+        assert!(!rs.has_more());
+    }
+
+    #[test]
+    fn test_result_set_with_pending_rows() {
+        let rs = ResultSet::with_pending_rows(
+            vec![],
+            vec![Row {
+                row_id: 0,
+                values: vec![Some(vec![1, 0, 0, 0])],
+            }],
+            0,
+        );
+        assert!(!rs.complete);
+        assert!(rs.has_more());
+        assert_eq!(rs.total_row_count, ResultSet::UNKNOWN_TOTAL);
     }
 
     #[test]

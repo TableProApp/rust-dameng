@@ -771,14 +771,13 @@ impl Client {
             )));
         }
 
-        let fetch_resp = FetchResponse::from_bytes(&payload, self.server_encoding)
-            .map_err(|e| Error::Protocol(e))?;
-
-        result_set.rows.extend(fetch_resp.rows);
-        result_set.total_row_count = fetch_resp.total_row_count as u64;
-
-        if result_set.columns.is_empty() && !fetch_resp.columns.is_empty() {
-            result_set.columns = fetch_resp.columns;
+        // The reply is bare rows, so it is parsed against the columns of the statement
+        // that opened the cursor, and its counts come from the frame header.
+        let batch =
+            FetchResponse::from_frame(&frame, &payload, &result_set.columns, self.server_encoding);
+        result_set.rows.extend(batch.rows);
+        if batch.total_row_count != dameng_protocol::ROW_TOTAL_UNKNOWN {
+            result_set.total_row_count = batch.total_row_count as u64;
         }
 
         Ok(result_set.total_row_count)
