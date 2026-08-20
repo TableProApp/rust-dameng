@@ -272,6 +272,15 @@ pub struct Client {
     pub interrupt: Arc<Interrupt>,
 }
 
+/// How long a blocking read waits before the loop re-reads the cancel flag and the
+/// deadline. The socket timeout never bounded a statement: `read_message` checks
+/// `Interrupt` on the `WouldBlock` arm and loops, so this is poll granularity, and a
+/// long value only delays how soon a stop or a timeout is noticed.
+const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+
+/// The connect and TLS handshake run before the poll loop owns the socket.
+const HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 impl Client {
     /// Create a new client for the given host and port.
     pub fn new(host: &str, port: u16) -> Self {
@@ -306,8 +315,11 @@ impl Client {
     fn connect_stream(&mut self, use_ssl: bool) -> Result<()> {
         let addr = format!("{}:{}", self.host, self.port);
         let stream = TcpStream::connect(&addr)?;
-        stream.set_read_timeout(Some(std::time::Duration::from_secs(10)))?;
-        stream.set_write_timeout(Some(std::time::Duration::from_secs(10)))?;
+        // The TLS handshake below reads through `native-tls`, which does not retry a
+        // WouldBlock, so it keeps the long timeout. The poll interval is applied to the
+        // established stream instead.
+        stream.set_read_timeout(Some(HANDSHAKE_TIMEOUT))?;
+        stream.set_write_timeout(Some(HANDSHAKE_TIMEOUT))?;
 
         if use_ssl {
             let connector = TlsConnector::new()
@@ -318,6 +330,9 @@ impl Client {
             self.stream = Some(Stream::Tls(tls_stream));
         } else {
             self.stream = Some(Stream::Tcp(stream));
+        }
+        if let Some(stream) = self.stream.as_mut() {
+            stream.set_read_timeout(Some(POLL_INTERVAL))?;
         }
         Ok(())
     }
@@ -1180,9 +1195,7 @@ impl Client {
             match stream.read(&mut tmp) {
                 Ok(0) => return None,
                 Ok(n) => buf.extend_from_slice(&tmp[..n]),
-                Err(e) if e.kind() == ErrorKind::WouldBlock || e.raw_os_error() == Some(35) => {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock || e.raw_os_error() == Some(35) => {}
                 Err(e) => return Some(Err(Error::Io(e))),
             }
         }
@@ -1210,9 +1223,7 @@ impl Client {
                     )))
                 }
                 Ok(n) => buf.extend_from_slice(&tmp[..n]),
-                Err(e) if e.kind() == ErrorKind::WouldBlock || e.raw_os_error() == Some(35) => {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock || e.raw_os_error() == Some(35) => {}
                 Err(e) => return Some(Err(Error::Io(e))),
             }
         }
@@ -1369,7 +1380,6 @@ impl Client {
                     Ok(n) => break n,
                     Err(e) if e.kind() == ErrorKind::WouldBlock || e.raw_os_error() == Some(35) => {
                         interrupt.check(deadline)?;
-                        std::thread::sleep(std::time::Duration::from_millis(10));
                         continue;
                     }
                     Err(e) => return Err(Error::Io(e)),
@@ -1400,7 +1410,6 @@ impl Client {
                     Ok(n) => break n,
                     Err(e) if e.kind() == ErrorKind::WouldBlock || e.raw_os_error() == Some(35) => {
                         interrupt.check(deadline)?;
-                        std::thread::sleep(std::time::Duration::from_millis(10));
                         continue;
                     }
                     Err(e) => return Err(Error::Io(e)),
@@ -1706,5 +1715,16 @@ mod tests {
         );
         assert!(checked_lob_len(-1).is_err());
         assert!(checked_lob_len(MAX_LOB_BYTES as i64 + 1).is_err());
+    }
+
+    /// A long read timeout is how soon a stop or a deadline is noticed, because
+    /// `read_message` only consults `Interrupt` on the `WouldBlock` arm. At ten seconds a
+    /// caller's cancel landed nine and a half seconds late and a one second statement
+    /// deadline fired at ten. `try_read_message`'s own shorter deadlines were unreachable
+    /// for the same reason.
+    #[test]
+    fn the_poll_interval_stays_short_enough_to_notice_a_stop() {
+        assert!(POLL_INTERVAL <= std::time::Duration::from_millis(250));
+        assert!(POLL_INTERVAL < HANDSHAKE_TIMEOUT);
     }
 }
